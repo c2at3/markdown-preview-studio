@@ -701,7 +701,7 @@ body.dark #editor-wrap .cm-searching { background: rgba(133, 77, 14, 0.5) !impor
 #editor-wrap .cm-strikethrough { text-decoration: line-through; color: var(--text-3); }
 #editor-wrap .cm-keyword { color: #c678dd; }
 #editor-wrap .cm-atom { color: #d19a66; }
-#editor-wrap .cm-string { color: #98c379; }
+#editor-wrap .cm-string { color: #2e8b57; }
 #editor-wrap .cm-variable-2 { color: var(--accent); }
 #editor-wrap .cm-tag { color: #e06c75; }
 #editor-wrap .cm-attribute { color: #d19a66; }
@@ -725,7 +725,7 @@ body.dark .cm-link { color: var(--accent); }
 body.dark .cm-url { color: var(--text-3); }
 body.dark .cm-comment { color: #d4956a; }
 body.dark .cm-quote { color: var(--text-2); }
-body.dark .cm-string { color: #7ec699; }
+body.dark .cm-string { color: #5dba84; }
 body.dark .cm-keyword { color: #c792ea; }
 body.dark .cm-tag { color: #f07178; }
 body.dark .cm-attribute { color: #ffcb6b; }
