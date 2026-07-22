@@ -815,27 +815,16 @@ body.dark .cm-attribute { color: #ffcb6b; }
 }
 .statusbar .spacer { flex: 1; }
 
-/* ===== SCROLLBAR ===== */
-#editor::-webkit-scrollbar,
-.preview-content::-webkit-scrollbar,
-.file-list::-webkit-scrollbar {
-  width: 6px;
+/* ===== SCROLLBAR (thin globally) ===== */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
-#editor::-webkit-scrollbar-track,
-.preview-content::-webkit-scrollbar-track,
-.file-list::-webkit-scrollbar-track {
-  background: transparent;
-}
-#editor::-webkit-scrollbar-thumb,
-.preview-content::-webkit-scrollbar-thumb,
-.file-list::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 3px;
-}
-#editor::-webkit-scrollbar-thumb:hover,
-.preview-content::-webkit-scrollbar-thumb:hover {
-  background: var(--text-3);
-}
+*::-webkit-scrollbar { width: 4px; height: 4px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+*::-webkit-scrollbar-corner { background: transparent; }
 
 /* ===== MARKDOWN BODY ===== */
 .markdown-body h1, .markdown-body h2, .markdown-body h3,
