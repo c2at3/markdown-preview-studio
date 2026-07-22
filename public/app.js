@@ -386,6 +386,7 @@ graph TD
     const wrap = cm.getWrapperElement();
     wrap.style.fontSize = editorFontSize + 'px';
     wrap.style.fontWeight = editorFontWeight;
+    wrap.style.setProperty('--editor-bold-weight', Math.min(900, editorFontWeight + 150));
     cm.refresh();
     $('#font-size-val').textContent = editorFontSize;
     $('#weight-val').textContent = editorFontWeight;

@@ -692,7 +692,7 @@ body.dark #editor-wrap .cm-searching { background: rgba(133, 77, 14, 0.5) !impor
 #editor-wrap .cm-header { color: var(--accent); font-weight: 600; }
 #editor-wrap .cm-header-1 { font-size: 1.3em; }
 #editor-wrap .cm-header-2 { font-size: 1.15em; }
-#editor-wrap .cm-strong { font-weight: 600; }
+#editor-wrap .cm-strong { font-weight: var(--editor-bold-weight, 550); }
 #editor-wrap .cm-em { font-style: italic; }
 #editor-wrap .cm-link { color: var(--accent); }
 #editor-wrap .cm-url { color: var(--text-3); }
