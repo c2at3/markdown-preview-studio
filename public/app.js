@@ -228,7 +228,7 @@ graph TD
       } catch (e) {
         cleanupMermaidErrors();
         const msg = (e.message || 'Invalid syntax').replace(/<[^>]*>/g, '').substring(0, 200);
-        el.innerHTML = '<div class="mermaid-error-box"><span class="mermaid-error-icon">⚠</span><div><strong>Mermaid syntax error</strong><pre class="mermaid-error-detail">' + msg + '</pre></div></div>';
+        el.innerHTML = '<div class="mermaid-error-box"><div><strong>Mermaid syntax error</strong><pre class="mermaid-error-detail">' + msg + '</pre></div></div>';
         el.classList.replace('mermaid-placeholder', 'mermaid-rendered');
       }
     }
