@@ -445,6 +445,250 @@ graph TD
     else if (svg) openLightbox(svg, 'Mermaid Diagram');
   });
 
+  // ===== Font controls =====
+  let editorFontSize = parseInt(localStorage.getItem('md-font-size')) || 14;
+  let editorFontWeight = parseInt(localStorage.getItem('md-font-weight')) || 300;
+
+  function applyFont() {
+    editor.style.fontSize = editorFontSize + 'px';
+    editor.style.fontWeight = editorFontWeight;
+    $('#font-size-val').textContent = editorFontSize;
+    $('#weight-val').textContent = editorFontWeight;
+    localStorage.setItem('md-font-size', editorFontSize);
+    localStorage.setItem('md-font-weight', editorFontWeight);
+  }
+
+  $('#font-up').addEventListener('click', () => { editorFontSize = Math.min(24, editorFontSize + 1); applyFont(); });
+  $('#font-down').addEventListener('click', () => { editorFontSize = Math.max(10, editorFontSize - 1); applyFont(); });
+  $('#weight-up').addEventListener('click', () => { editorFontWeight = Math.min(700, editorFontWeight + 100); applyFont(); });
+  $('#weight-down').addEventListener('click', () => { editorFontWeight = Math.max(100, editorFontWeight - 100); applyFont(); });
+
+  applyFont();
+
+  // ===== Find/Replace =====
+  const findPanel = $('#find-panel');
+  const findInput = $('#find-input');
+  const replaceInput = $('#replace-input');
+  const findCount = $('#find-count');
+  const findResults = $('#find-results');
+  let findScope = 'file';
+  let findMatchCase = false;
+  let findUseRegex = false;
+  let findMatches = [];
+  let findCurrentIdx = -1;
+
+  function toggleFindPanel(show) {
+    const visible = show !== undefined ? show : findPanel.style.display === 'none';
+    findPanel.style.display = visible ? '' : 'none';
+    if (visible) { findInput.focus(); findInput.select(); doFind(); }
+    else { findMatches = []; findCurrentIdx = -1; findCount.textContent = ''; findResults.style.display = 'none'; }
+  }
+
+  function buildRegex(query) {
+    if (!query) return null;
+    let pattern = findUseRegex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    try { return new RegExp(pattern, findMatchCase ? 'g' : 'gi'); }
+    catch (e) { return null; }
+  }
+
+  function doFind() {
+    const query = findInput.value;
+    findMatches = [];
+    findCurrentIdx = -1;
+    findResults.style.display = 'none';
+    findResults.innerHTML = '';
+
+    if (!query) { findCount.textContent = ''; return; }
+
+    if (findScope === 'file') {
+      findInText(editor.value, query);
+      findCount.textContent = findMatches.length ? `${findMatches.length} found` : 'No results';
+      if (findMatches.length) { findCurrentIdx = 0; highlightMatch(); }
+    } else {
+      findAcrossFiles(query);
+    }
+  }
+
+  function findInText(text, query) {
+    const re = buildRegex(query);
+    if (!re) return [];
+    const matches = [];
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      matches.push({ start: m.index, end: m.index + m[0].length, text: m[0] });
+      if (!re.global) break;
+    }
+    findMatches = matches;
+    return matches;
+  }
+
+  async function findAcrossFiles(query) {
+    const re = buildRegex(query);
+    if (!re) { findCount.textContent = 'Invalid'; return; }
+
+    const allFiles = await api.getFiles();
+    const results = [];
+    let totalMatches = 0;
+
+    for (const f of allFiles) {
+      const file = await api.getFile(f.id);
+      const lines = file.content.split('\n');
+      const fileMatches = [];
+      lines.forEach((line, idx) => {
+        re.lastIndex = 0;
+        if (re.test(line)) {
+          re.lastIndex = 0;
+          fileMatches.push({ lineNum: idx + 1, line, fileId: f.id, fileName: f.name });
+          totalMatches++;
+        }
+      });
+      if (fileMatches.length) results.push({ file: f, matches: fileMatches });
+    }
+
+    findCount.textContent = totalMatches ? `${totalMatches} in ${results.length} files` : 'No results';
+    findResults.innerHTML = '';
+
+    if (results.length) {
+      findResults.style.display = '';
+      results.forEach(r => {
+        const fileEl = document.createElement('div');
+        fileEl.className = 'find-result-file';
+        fileEl.textContent = r.file.name + ' (' + r.matches.length + ')';
+        fileEl.addEventListener('click', () => switchFile(r.file.id));
+        findResults.appendChild(fileEl);
+
+        r.matches.forEach(m => {
+          const lineEl = document.createElement('div');
+          lineEl.className = 'find-result-line';
+          const highlighted = escapeHtml(m.line).replace(
+            buildRegex(query),
+            match => '<mark>' + match + '</mark>'
+          );
+          lineEl.innerHTML = '<span style="color:var(--text-3);margin-right:6px">' + m.lineNum + ':</span>' + highlighted;
+          lineEl.addEventListener('click', async () => {
+            await switchFile(m.fileId);
+            const lines = editor.value.split('\n');
+            let pos = 0;
+            for (let i = 0; i < m.lineNum - 1; i++) pos += lines[i].length + 1;
+            editor.focus();
+            editor.selectionStart = pos;
+            editor.selectionEnd = pos + m.line.length;
+            editor.scrollTop = editor.scrollHeight * (pos / editor.value.length);
+          });
+          findResults.appendChild(lineEl);
+        });
+      });
+    }
+  }
+
+  function highlightMatch() {
+    if (!findMatches.length) return;
+    const m = findMatches[findCurrentIdx];
+    editor.focus();
+    editor.selectionStart = m.start;
+    editor.selectionEnd = m.end;
+
+    const before = editor.value.substring(0, m.start);
+    const lineRatio = before.split('\n').length / editor.value.split('\n').length;
+    editor.scrollTop = (editor.scrollHeight - editor.clientHeight) * lineRatio;
+
+    findCount.textContent = `${findCurrentIdx + 1} / ${findMatches.length}`;
+  }
+
+  function findNext() {
+    if (!findMatches.length) return;
+    findCurrentIdx = (findCurrentIdx + 1) % findMatches.length;
+    highlightMatch();
+  }
+
+  function findPrev() {
+    if (!findMatches.length) return;
+    findCurrentIdx = (findCurrentIdx - 1 + findMatches.length) % findMatches.length;
+    highlightMatch();
+  }
+
+  function replaceOne() {
+    if (findScope !== 'file' || !findMatches.length || findCurrentIdx < 0) return;
+    const m = findMatches[findCurrentIdx];
+    editor.focus();
+    editor.selectionStart = m.start;
+    editor.selectionEnd = m.end;
+    document.execCommand('insertText', false, replaceInput.value);
+    scheduleSave();
+    scheduleRender();
+    doFind();
+  }
+
+  function replaceAll() {
+    if (findScope !== 'file') {
+      replaceAllFiles();
+      return;
+    }
+    const query = findInput.value;
+    const re = buildRegex(query);
+    if (!re || !query) return;
+    const replaced = editor.value.replace(re, replaceInput.value);
+    if (replaced === editor.value) return;
+    editor.focus();
+    editor.selectionStart = 0;
+    editor.selectionEnd = editor.value.length;
+    document.execCommand('insertText', false, replaced);
+    scheduleSave();
+    scheduleRender();
+    doFind();
+  }
+
+  async function replaceAllFiles() {
+    const query = findInput.value;
+    const re = buildRegex(query);
+    if (!re || !query) return;
+    if (!confirm('Replace all occurrences across ALL files?')) return;
+    const allFiles = await api.getFiles();
+    let count = 0;
+    for (const f of allFiles) {
+      const file = await api.getFile(f.id);
+      const replaced = file.content.replace(re, replaceInput.value);
+      if (replaced !== file.content) {
+        await api.updateFile(f.id, { content: replaced });
+        re.lastIndex = 0;
+        count++;
+      }
+    }
+    if (activeFileId) {
+      const cur = await api.getFile(activeFileId);
+      editor.value = cur.content;
+      scheduleRender();
+    }
+    showToast(count + ' files updated');
+    doFind();
+  }
+
+  // Find panel events
+  $('#find-panel-close').addEventListener('click', () => toggleFindPanel(false));
+  findInput.addEventListener('input', doFind);
+  findInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); findPrev(); }
+    else if (e.key === 'Enter') { e.preventDefault(); findNext(); }
+    if (e.key === 'Escape') toggleFindPanel(false);
+  });
+  replaceInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') toggleFindPanel(false); });
+  $('#find-next').addEventListener('click', findNext);
+  $('#find-prev').addEventListener('click', findPrev);
+  $('#replace-one').addEventListener('click', replaceOne);
+  $('#replace-all-btn').addEventListener('click', replaceAll);
+
+  $('#find-opt-case').addEventListener('click', function() { findMatchCase = !findMatchCase; this.classList.toggle('active'); doFind(); });
+  $('#find-opt-regex').addEventListener('click', function() { findUseRegex = !findUseRegex; this.classList.toggle('active'); doFind(); });
+
+  $$('.find-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      $$('.find-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      findScope = tab.dataset.scope;
+      doFind();
+    });
+  });
+
   // ===== Stats =====
   function updateStats() {
     const text = editor.value;
@@ -612,7 +856,7 @@ graph TD
     el.innerHTML = `
       <svg class="file-item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       <span class="file-item-name">${escapeHtml(f.name || 'Untitled')}</span>
-      <span class="file-item-pin ${f.is_pinned ? 'pinned' : ''}" data-action="pin" title="Pin">📌</span>
+      <span class="file-item-pin ${f.is_pinned ? 'pinned' : ''}" data-action="pin" title="Pin"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></span>
       <div class="file-item-actions">
         <button data-action="delete" title="Delete">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
@@ -1039,6 +1283,8 @@ graph TD
       if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); showToast('All changes saved automatically'); }
       if ((e.ctrlKey || e.metaKey) && e.key === 'b') { e.preventDefault(); insertAround('**', '**'); }
       if ((e.ctrlKey || e.metaKey) && e.key === 'i') { e.preventDefault(); insertAround('*', '*'); }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); toggleFindPanel(true); }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'h') { e.preventDefault(); toggleFindPanel(true); replaceInput.focus(); }
     });
   }
 
