@@ -575,9 +575,9 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
 .find-results {
   max-height: 200px;
   overflow-y: auto;
-  margin-top: 8px;
-  border-top: 1px solid var(--border);
-  padding-top: 6px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
 }
 .find-result-file {
   font-size: 11px;
