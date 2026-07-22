@@ -1092,7 +1092,7 @@ body.dark .cm-attribute { color: #ffcb6b; }
   margin: 0 !important;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 80px;
+  max-height: 160px;
   overflow-y: auto;
   line-height: 1.5;
 }
