@@ -244,6 +244,10 @@ graph TD
   function render() {
     isRendering = true;
     preview.innerHTML = marked.parse(cm.getValue());
+    preview.querySelectorAll('a').forEach(a => {
+      a.setAttribute('target', '_blank');
+      a.setAttribute('rel', 'noopener noreferrer');
+    });
     renderMermaidBlocks().then(wrapZoomableMedia);
     wrapZoomableMedia();
     updateStats();
