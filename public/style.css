@@ -638,12 +638,10 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
   height: 100%;
   font-family: var(--font-mono);
   font-size: 14px;
-  font-weight: 300;
+  font-weight: 400;
   line-height: 1.7;
   background: var(--bg);
   color: var(--text);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
 }
 #editor-wrap .CodeMirror-gutters {
   background: var(--bg-alt);
