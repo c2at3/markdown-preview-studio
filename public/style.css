@@ -573,11 +573,33 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
 .find-nav-btn:hover, .find-action-btn:hover { background: var(--bg-hover); color: var(--text); border-color: var(--text-3); }
 
 .find-results {
-  max-height: 200px;
+  height: 200px;
+  min-height: 60px;
+  max-height: 50vh;
   overflow-y: auto;
   margin-bottom: 8px;
   border-bottom: 1px solid var(--border);
   padding-bottom: 6px;
+  resize: vertical;
+}
+.find-results::-webkit-resizer {
+  display: none;
+}
+.find-results-resizer {
+  height: 5px;
+  cursor: ns-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  user-select: none;
+}
+.find-results-resizer::after {
+  content: '';
+  width: 32px;
+  height: 3px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 .find-result-file {
   font-size: 11px;

@@ -481,7 +481,7 @@ graph TD
     const visible = show !== undefined ? show : findPanel.style.display === 'none';
     findPanel.style.display = visible ? '' : 'none';
     if (visible) { findInput.focus(); findInput.select(); doFind(); }
-    else { findMatches = []; findCurrentIdx = -1; findCount.textContent = ''; findResults.style.display = 'none'; }
+    else { findMatches = []; findCurrentIdx = -1; findCount.textContent = ''; findResults.style.display = 'none'; $('#find-results-resizer').style.display = 'none'; }
   }
 
   function buildRegex(query) {
@@ -496,6 +496,7 @@ graph TD
     findMatches = [];
     findCurrentIdx = -1;
     findResults.style.display = 'none';
+    $('#find-results-resizer').style.display = 'none';
     findResults.innerHTML = '';
 
     if (!query) { findCount.textContent = ''; return; }
@@ -550,6 +551,7 @@ graph TD
 
     if (results.length) {
       findResults.style.display = '';
+      $('#find-results-resizer').style.display = '';
       results.forEach(r => {
         const fileEl = document.createElement('div');
         fileEl.className = 'find-result-file';
@@ -688,6 +690,31 @@ graph TD
       doFind();
     });
   });
+
+  // Find results resizer
+  (() => {
+    const resizer = $('#find-results-resizer');
+    let dragging = false, startY = 0, startH = 0;
+    resizer.addEventListener('mousedown', (e) => {
+      dragging = true;
+      startY = e.clientY;
+      startH = findResults.offsetHeight;
+      document.body.style.cursor = 'ns-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const delta = startY - e.clientY;
+      findResults.style.height = Math.max(60, Math.min(window.innerHeight * 0.5, startH + delta)) + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    });
+  })();
 
   // ===== Stats =====
   function updateStats() {
