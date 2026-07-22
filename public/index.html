@@ -102,6 +102,17 @@
       </div>
     </header>
 
+    <!-- Editor + Preview -->
+    <div class="editor-container">
+      <div class="pane editor-pane" id="editor-pane">
+        <textarea id="editor" spellcheck="false" placeholder="Start writing markdown..."></textarea>
+      </div>
+      <div class="divider" id="divider"></div>
+      <div class="pane preview-pane" id="preview-pane">
+        <div id="preview" class="preview-content markdown-body"></div>
+      </div>
+    </div>
+
     <!-- Find/Replace panel -->
     <div class="find-panel" id="find-panel" style="display:none">
       <div class="find-panel-tabs">
@@ -137,17 +148,6 @@
         <button class="find-action-btn" id="replace-all-btn" title="Replace all">All</button>
       </div>
       <div class="find-results" id="find-results" style="display:none"></div>
-    </div>
-
-    <!-- Editor + Preview -->
-    <div class="editor-container">
-      <div class="pane editor-pane" id="editor-pane">
-        <textarea id="editor" spellcheck="false" placeholder="Start writing markdown..."></textarea>
-      </div>
-      <div class="divider" id="divider"></div>
-      <div class="pane preview-pane" id="preview-pane">
-        <div id="preview" class="preview-content markdown-body"></div>
-      </div>
     </div>
 
     <!-- Status bar -->
