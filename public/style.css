@@ -696,7 +696,7 @@ body.dark #editor-wrap .cm-searching { background: rgba(133, 77, 14, 0.5) !impor
 #editor-wrap .cm-em { font-style: italic; }
 #editor-wrap .cm-link { color: var(--accent); }
 #editor-wrap .cm-url { color: var(--text-3); }
-#editor-wrap .cm-comment { color: var(--text-3); }
+#editor-wrap .cm-comment { color: #b05a3e; }
 #editor-wrap .cm-quote { color: var(--text-2); font-style: italic; }
 #editor-wrap .cm-strikethrough { text-decoration: line-through; color: var(--text-3); }
 #editor-wrap .cm-keyword { color: #c678dd; }
@@ -723,7 +723,7 @@ body.dark .CodeMirror-cursor { border-left-color: var(--text); }
 body.dark .cm-header { color: var(--accent); }
 body.dark .cm-link { color: var(--accent); }
 body.dark .cm-url { color: var(--text-3); }
-body.dark .cm-comment { color: var(--text-3); }
+body.dark .cm-comment { color: #d4956a; }
 body.dark .cm-quote { color: var(--text-2); }
 body.dark .cm-string { color: #7ec699; }
 body.dark .cm-keyword { color: #c792ea; }
