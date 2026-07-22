@@ -503,7 +503,7 @@ graph TD
     if (findScope === 'file') {
       findInText(editor.value, query);
       findCount.textContent = findMatches.length ? `${findMatches.length} found` : 'No results';
-      if (findMatches.length) { findCurrentIdx = 0; highlightMatch(); }
+      if (findMatches.length) { findCurrentIdx = 0; highlightMatch(false); }
     } else {
       findAcrossFiles(query);
     }
@@ -581,10 +581,10 @@ graph TD
     }
   }
 
-  function highlightMatch() {
+  function highlightMatch(focusEditor) {
     if (!findMatches.length) return;
     const m = findMatches[findCurrentIdx];
-    editor.focus();
+    if (focusEditor) editor.focus();
     editor.selectionStart = m.start;
     editor.selectionEnd = m.end;
 
@@ -598,13 +598,13 @@ graph TD
   function findNext() {
     if (!findMatches.length) return;
     findCurrentIdx = (findCurrentIdx + 1) % findMatches.length;
-    highlightMatch();
+    highlightMatch(true);
   }
 
   function findPrev() {
     if (!findMatches.length) return;
     findCurrentIdx = (findCurrentIdx - 1 + findMatches.length) % findMatches.length;
-    highlightMatch();
+    highlightMatch(true);
   }
 
   function replaceOne() {
