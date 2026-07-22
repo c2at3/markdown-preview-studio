@@ -508,8 +508,32 @@ graph TD
           lineEl.innerHTML = '<span style="color:var(--text-3);margin-right:6px">' + m.lineNum + ':</span>' + highlighted;
           lineEl.addEventListener('click', async () => {
             await switchFile(m.fileId);
-            cm.setCursor({ line: m.lineNum - 1, ch: 0 });
-            cm.scrollIntoView(null, 100);
+            // Highlight all matches in this file
+            const fileRe = buildRegex(query);
+            if (fileRe) {
+              clearFindMarkers();
+              const text = cm.getValue();
+              let fm;
+              while ((fm = fileRe.exec(text)) !== null) {
+                const from = cm.posFromIndex(fm.index);
+                const to = cm.posFromIndex(fm.index + fm[0].length);
+                findMarkers.push(cm.markText(from, to, { className: 'cm-find-match' }));
+                if (!fileRe.global) break;
+              }
+            }
+            // Jump to clicked line and highlight it
+            const lineText = cm.getLine(m.lineNum - 1) || '';
+            const re2 = buildRegex(query);
+            if (re2) {
+              const lineMatch = re2.exec(lineText);
+              if (lineMatch) {
+                const from = { line: m.lineNum - 1, ch: lineMatch.index };
+                const to = { line: m.lineNum - 1, ch: lineMatch.index + lineMatch[0].length };
+                findMarkers.push(cm.markText(from, to, { className: 'cm-find-active' }));
+                cm.setSelection(from, to);
+              }
+            }
+            cm.scrollIntoView({ line: m.lineNum - 1, ch: 0 }, 100);
             cm.focus();
           });
           findResults.appendChild(lineEl);
