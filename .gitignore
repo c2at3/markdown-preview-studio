@@ -1,0 +1,8 @@
+node_modules/
+data/
+.claude/
+*.log
+package-lock.json
+/app.js
+/index.html
+/style.css

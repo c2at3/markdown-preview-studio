@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Markdown Live Preview</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" id="hljs-light">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" id="hljs-dark" disabled>
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="brand">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        <span>MD Preview</span>
+      </div>
+      <button class="icon-btn" id="btn-toggle-sidebar" title="Toggle sidebar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+    </div>
+
+    <div class="sidebar-actions">
+      <button class="btn-new-file" id="btn-new-file">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        File
+      </button>
+      <button class="btn-new-folder" id="btn-new-folder">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/><path d="M12 11v6M9 14h6"/></svg>
+        Folder
+      </button>
+    </div>
+
+    <div class="file-list" id="file-list"></div>
+
+    <div class="sidebar-footer">
+      <label class="sidebar-toggle">
+        <input type="checkbox" id="toggle-dark">
+        <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+      </label>
+    </div>
+  </aside>
+
+  <!-- Main area -->
+  <div class="main" id="main">
+    <!-- Toolbar -->
+    <header class="toolbar">
+      <div class="toolbar-left">
+        <button class="icon-btn sidebar-open-btn" id="btn-open-sidebar" title="Open sidebar" style="display:none">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+        </button>
+        <input type="text" id="file-name" class="file-name-input" placeholder="Untitled" spellcheck="false">
+        <span class="save-status" id="save-status"></span>
+      </div>
+      <div class="toolbar-right">
+        <div class="toolbar-group">
+          <button class="tool-btn" id="btn-bold" title="Bold (Ctrl+B)"><b>B</b></button>
+          <button class="tool-btn" id="btn-italic" title="Italic (Ctrl+I)"><i>I</i></button>
+          <button class="tool-btn" id="btn-heading" title="Heading">H</button>
+          <button class="tool-btn" id="btn-link" title="Link">🔗</button>
+          <button class="tool-btn" id="btn-code" title="Code block">&lt;/&gt;</button>
+          <button class="tool-btn" id="btn-table" title="Table">⊞</button>
+          <button class="tool-btn" id="btn-image" title="Insert image">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+          </button>
+        </div>
+        <div class="toolbar-divider"></div>
+        <div class="toolbar-group">
+          <button class="tool-btn" id="btn-copy-md" title="Copy Markdown">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            MD
+          </button>
+          <button class="tool-btn" id="btn-copy-html" title="Copy HTML">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            HTML
+          </button>
+        </div>
+        <div class="toolbar-divider"></div>
+        <button class="tool-btn accent" id="btn-share" title="Share">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
+          Share
+        </button>
+        <button class="tool-btn" id="btn-export" title="Export PDF">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          PDF
+        </button>
+        <label class="sync-toggle" title="Cuộn đồng bộ editor và preview">
+          <input type="checkbox" id="toggle-sync" checked>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>
+          <span class="sync-label">Sync scroll</span>
+        </label>
+      </div>
+    </header>
+
+    <!-- Editor + Preview -->
+    <div class="editor-container">
+      <div class="pane editor-pane" id="editor-pane">
+        <textarea id="editor" spellcheck="false" placeholder="Start writing markdown..."></textarea>
+      </div>
+      <div class="divider" id="divider"></div>
+      <div class="pane preview-pane" id="preview-pane">
+        <div id="preview" class="preview-content markdown-body"></div>
+      </div>
+    </div>
+
+    <!-- Status bar -->
+    <footer class="statusbar">
+      <span id="stat-lines">0 lines</span>
+      <span class="dot"></span>
+      <span id="stat-words">0 words</span>
+      <span class="dot"></span>
+      <span id="stat-chars">0 chars</span>
+      <span class="spacer"></span>
+      <span id="stat-cursor">Ln 1, Col 1</span>
+    </footer>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <!-- Modal -->
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal" id="modal">
+      <div class="modal-header">
+        <h3 id="modal-title">Share</h3>
+        <button class="icon-btn" id="modal-close">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Shared view banner -->
+  <div class="shared-banner" id="shared-banner" style="display:none">
+    <div class="shared-banner-inner">
+      <span>📄 You're viewing a shared document</span>
+      <button class="btn-fork" id="btn-fork">Fork to edit</button>
+      <button class="icon-btn" id="btn-close-banner">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Lightbox -->
+  <div class="lightbox" id="lightbox">
+    <div class="lightbox-toolbar">
+      <button id="lb-zoom-in" title="Zoom in">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35M11 8v6M8 11h6"/></svg>
+      </button>
+      <button id="lb-zoom-out" title="Zoom out">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35M8 11h6"/></svg>
+      </button>
+      <span class="lightbox-zoom-level" id="lb-zoom-level">100%</span>
+      <div class="lb-divider"></div>
+      <button id="lb-reset" title="Reset zoom">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+      </button>
+      <div class="lb-divider"></div>
+      <button id="lb-close" title="Close (Esc)">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="lightbox-viewport" id="lightbox-viewport">
+      <div class="lightbox-transform" id="lightbox-transform"></div>
+    </div>
+    <div class="lightbox-caption" id="lightbox-caption"></div>
+  </div>
+
+  <input type="file" id="image-upload" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

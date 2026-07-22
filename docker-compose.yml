@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .
+    container_name: markdown-preview
+    ports:
+      - "3456:3456"
+    volumes:
+      - md-data:/app/data
+    environment:
+      - PORT=3456
+      - DB_PATH=/app/data/markdown.db
+    restart: unless-stopped
+
+volumes:
+  md-data:
+    driver: local
