@@ -694,6 +694,7 @@ graph TD
   // ===== File management =====
   async function switchFile(id) {
     activeFileId = id;
+    localStorage.setItem('md-active-file', id);
     const file = await api.getFile(id);
     cm.setValue(file.content);
     fileNameInput.value = file.name;
@@ -870,7 +871,8 @@ graph TD
     await loadAll();
     if (!files.length) { const file = await api.createFile('Welcome', DEFAULT_MD); files = [file]; renderSidebar(); }
 
-    activeFileId = files[0].id;
+    const savedFileId = localStorage.getItem('md-active-file');
+    activeFileId = (savedFileId && files.find(f => f.id === savedFileId)) ? savedFileId : files[0].id;
     await switchFile(activeFileId);
 
     const darkPref = localStorage.getItem('md-dark');
