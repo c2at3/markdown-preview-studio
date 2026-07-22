@@ -396,8 +396,9 @@ graph TD
 
   $('#font-up').addEventListener('click', () => { editorFontSize = Math.min(24, editorFontSize + 1); applyFont(); });
   $('#font-down').addEventListener('click', () => { editorFontSize = Math.max(10, editorFontSize - 1); applyFont(); });
-  $('#weight-up').addEventListener('click', () => { editorFontWeight = Math.min(700, editorFontWeight + 100); applyFont(); });
-  $('#weight-down').addEventListener('click', () => { editorFontWeight = Math.max(100, editorFontWeight - 100); applyFont(); });
+  const WEIGHT_STEPS = [200, 300, 400, 500, 700];
+  $('#weight-up').addEventListener('click', () => { const i = WEIGHT_STEPS.indexOf(editorFontWeight); editorFontWeight = WEIGHT_STEPS[Math.min(i + 1, WEIGHT_STEPS.length - 1)] || 700; applyFont(); });
+  $('#weight-down').addEventListener('click', () => { const i = WEIGHT_STEPS.indexOf(editorFontWeight); editorFontWeight = WEIGHT_STEPS[Math.max(i - 1, 0)] || 200; applyFont(); });
 
   applyFont();
 
