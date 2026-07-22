@@ -1271,6 +1271,7 @@ graph TD
 
     $('#btn-copy-md').addEventListener('click', () => navigator.clipboard.writeText(editor.value).then(() => showToast('Markdown copied')));
     $('#btn-copy-html').addEventListener('click', () => navigator.clipboard.writeText(preview.innerHTML).then(() => showToast('HTML copied')));
+    $('#btn-find').addEventListener('click', () => toggleFindPanel());
     $('#btn-share').addEventListener('click', shareCurrentFile);
     $('#btn-export').addEventListener('click', exportPDF);
     $('#toggle-dark').addEventListener('change', () => applyDark($('#toggle-dark').checked));
@@ -1279,12 +1280,15 @@ graph TD
     modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) modalOverlay.classList.remove('show'); });
 
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') modalOverlay.classList.remove('show');
+      if (e.key === 'Escape') { modalOverlay.classList.remove('show'); if (findPanel.style.display !== 'none') toggleFindPanel(false); }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); toggleFindPanel(true); return; }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'h') { e.preventDefault(); toggleFindPanel(true); replaceInput.focus(); return; }
+      // Don't run editor shortcuts when focus is in find panel or other inputs
+      const inInput = document.activeElement?.tagName === 'INPUT';
+      if (inInput) return;
       if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); showToast('All changes saved automatically'); }
       if ((e.ctrlKey || e.metaKey) && e.key === 'b') { e.preventDefault(); insertAround('**', '**'); }
       if ((e.ctrlKey || e.metaKey) && e.key === 'i') { e.preventDefault(); insertAround('*', '*'); }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); toggleFindPanel(true); }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'h') { e.preventDefault(); toggleFindPanel(true); replaceInput.focus(); }
     });
   }
 
