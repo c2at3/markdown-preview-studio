@@ -1182,20 +1182,14 @@ body.dark .cm-attribute { color: #ffcb6b; }
 }
 .share-url-box button:hover { background: var(--accent-hover); }
 
-.share-revoke-btn {
+.share-url-box button.share-revoke-btn {
   background: var(--danger-soft);
   border: 1px solid var(--danger);
-  border-radius: var(--radius-sm);
   color: var(--danger);
-  cursor: pointer;
   padding: 6px 12px;
   font-size: 11px;
-  font-weight: 500;
-  font-family: var(--font-sans);
-  transition: all 0.1s;
-  white-space: nowrap;
 }
-.share-revoke-btn:hover { background: var(--danger); color: #fff; }
+.share-url-box button.share-revoke-btn:hover { background: var(--danger); color: #fff; }
 
 .share-section {
   margin-bottom: 12px;
