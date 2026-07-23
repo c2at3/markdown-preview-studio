@@ -2,7 +2,10 @@ const express = require('express');
 const initSqlJs = require('sql.js');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { nanoid } = require('nanoid');
+
+function hashPassword(pw) { return crypto.createHash('sha256').update(pw).digest('hex'); }
 
 const app = express();
 const PORT = process.env.PORT || 3456;
@@ -83,6 +86,8 @@ async function initDb() {
   try { db.run('ALTER TABLE files ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
   try { db.run('ALTER TABLE files ADD COLUMN private_view_token TEXT'); } catch (e) {}
   try { db.run('ALTER TABLE files ADD COLUMN private_edit_token TEXT'); } catch (e) {}
+  try { db.run('ALTER TABLE files ADD COLUMN private_view_pw TEXT'); } catch (e) {}
+  try { db.run('ALTER TABLE files ADD COLUMN private_edit_pw TEXT'); } catch (e) {}
 
   db.run('CREATE INDEX IF NOT EXISTS idx_files_share_id ON files(share_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_id)');
@@ -191,7 +196,7 @@ app.delete('/api/files/:id', (req, res) => {
 });
 
 // ===== SHARING =====
-// Public share (short token)
+// Public share (short token, no password)
 app.post('/api/files/:id/share', (req, res) => {
   const file = get('SELECT * FROM files WHERE id = ?', [req.params.id]);
   if (!file) return res.status(404).json({ error: 'Not found' });
@@ -204,24 +209,35 @@ app.post('/api/files/:id/share', (req, res) => {
   res.json({ share_id: shareId });
 });
 
-// Private share (long tokens)
+// Private share (token + password)
 app.post('/api/files/:id/share-private', (req, res) => {
   const file = get('SELECT * FROM files WHERE id = ?', [req.params.id]);
   if (!file) return res.status(404).json({ error: 'Not found' });
+  const { view_password, edit_password } = req.body;
+
   let viewToken = file.private_view_token;
   let editToken = file.private_edit_token;
-  if (!viewToken) { viewToken = nanoid(32); run('UPDATE files SET private_view_token = ? WHERE id = ?', [viewToken, req.params.id]); }
-  if (!editToken) { editToken = nanoid(32); run('UPDATE files SET private_edit_token = ? WHERE id = ?', [editToken, req.params.id]); }
+  if (!viewToken) { viewToken = nanoid(16); }
+  if (!editToken) { editToken = nanoid(16); }
+
+  const viewPwHash = view_password ? hashPassword(view_password) : (file.private_view_pw || null);
+  const editPwHash = edit_password ? hashPassword(edit_password) : (file.private_edit_pw || null);
+
+  run('UPDATE files SET private_view_token = ?, private_edit_token = ?, private_view_pw = ?, private_edit_pw = ? WHERE id = ?',
+    [viewToken, editToken, viewPwHash, editPwHash, req.params.id]);
   scheduleSave();
-  res.json({ view_token: viewToken, edit_token: editToken });
+
+  res.json({
+    view_token: viewToken,
+    edit_token: editToken,
+    has_view_pw: !!viewPwHash,
+    has_edit_pw: !!editPwHash
+  });
 });
 
-// Revoke private tokens
+// Revoke private share
 app.delete('/api/files/:id/share-private', (req, res) => {
-  const { type } = req.body || {};
-  if (type === 'view') run('UPDATE files SET private_view_token = NULL WHERE id = ?', [req.params.id]);
-  else if (type === 'edit') run('UPDATE files SET private_edit_token = NULL WHERE id = ?', [req.params.id]);
-  else { run('UPDATE files SET private_view_token = NULL, private_edit_token = NULL WHERE id = ?', [req.params.id]); }
+  run('UPDATE files SET private_view_token = NULL, private_edit_token = NULL, private_view_pw = NULL, private_edit_pw = NULL WHERE id = ?', [req.params.id]);
   scheduleSave();
   res.json({ ok: true });
 });
@@ -242,24 +258,46 @@ app.post('/api/shared/:shareId/fork', (req, res) => {
   res.status(201).json(get('SELECT * FROM files WHERE id = ?', [id]));
 });
 
-// Private view endpoint
-app.get('/api/private/:token', (req, res) => {
-  const file = get('SELECT id, name, content, created_at, updated_at FROM files WHERE private_view_token = ? OR private_edit_token = ?', [req.params.token, req.params.token]);
+// Private view — verify password
+app.post('/api/private/:token/auth', (req, res) => {
+  const file = get('SELECT id, name, content, private_view_pw, created_at, updated_at FROM files WHERE private_view_token = ?', [req.params.token]);
   if (!file) return res.status(404).json({ error: 'Not found' });
-  res.json(file);
+  if (file.private_view_pw && hashPassword(req.body.password || '') !== file.private_view_pw) {
+    return res.status(403).json({ error: 'Wrong password' });
+  }
+  res.json({ id: file.id, name: file.name, content: file.content, created_at: file.created_at, updated_at: file.updated_at });
 });
 
-// Private edit endpoints
-app.get('/api/private-edit/:token', (req, res) => {
-  const file = get('SELECT id, name, content, created_at, updated_at FROM files WHERE private_edit_token = ?', [req.params.token]);
+// Check if private link needs password
+app.get('/api/private/:token/check', (req, res) => {
+  const file = get('SELECT id, name, private_view_pw FROM files WHERE private_view_token = ?', [req.params.token]);
   if (!file) return res.status(404).json({ error: 'Not found' });
-  res.json(file);
+  res.json({ needs_password: !!file.private_view_pw, name: file.name });
+});
+
+// Private edit — verify password
+app.post('/api/private-edit/:token/auth', (req, res) => {
+  const file = get('SELECT id, name, content, private_edit_pw, created_at, updated_at FROM files WHERE private_edit_token = ?', [req.params.token]);
+  if (!file) return res.status(404).json({ error: 'Not found' });
+  if (file.private_edit_pw && hashPassword(req.body.password || '') !== file.private_edit_pw) {
+    return res.status(403).json({ error: 'Wrong password' });
+  }
+  res.json({ id: file.id, name: file.name, content: file.content, created_at: file.created_at, updated_at: file.updated_at });
+});
+
+app.get('/api/private-edit/:token/check', (req, res) => {
+  const file = get('SELECT id, name, private_edit_pw FROM files WHERE private_edit_token = ?', [req.params.token]);
+  if (!file) return res.status(404).json({ error: 'Not found' });
+  res.json({ needs_password: !!file.private_edit_pw, name: file.name });
 });
 
 app.put('/api/private-edit/:token', (req, res) => {
-  const file = get('SELECT id FROM files WHERE private_edit_token = ?', [req.params.token]);
+  const { password, name, content } = req.body;
+  const file = get('SELECT id, private_edit_pw FROM files WHERE private_edit_token = ?', [req.params.token]);
   if (!file) return res.status(404).json({ error: 'Not found' });
-  const { name, content } = req.body;
+  if (file.private_edit_pw && hashPassword(password || '') !== file.private_edit_pw) {
+    return res.status(403).json({ error: 'Wrong password' });
+  }
   const sets = [], vals = [];
   if (name !== undefined) { sets.push('name = ?'); vals.push(name); }
   if (content !== undefined) { sets.push('content = ?'); vals.push(content); }

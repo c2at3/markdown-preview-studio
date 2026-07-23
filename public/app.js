@@ -817,53 +817,78 @@ graph TD
   // ===== Share =====
   async function shareCurrentFile() {
     if (!activeFileId) return;
-
-    const [pubResult, privResult] = await Promise.all([
-      api.shareFile(activeFileId),
-      fetch('/api/files/' + activeFileId + '/share-private', { method: 'POST' }).then(r => r.json())
-    ]);
-
+    const pubResult = await api.shareFile(activeFileId);
     const pubUrl = location.origin + '/s/' + pubResult.share_id;
-    const viewUrl = location.origin + '/p/' + privResult.view_token;
-    const editUrl = location.origin + '/e/' + privResult.edit_token;
 
     modalTitle.textContent = 'Share';
     modalBody.innerHTML = `
       <div class="share-section">
         <div class="share-label">Public (anyone can view & fork)</div>
-        <div class="share-url-box"><input type="text" value="${pubUrl}" readonly><button data-url="${pubUrl}">Copy</button></div>
+        <div class="share-url-box"><input type="text" value="${pubUrl}" readonly><button id="copy-pub">Copy</button></div>
+      </div>
+      <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
+      <div class="share-section">
+        <div class="share-label">Private read-only (password protected)</div>
+        <div class="share-url-box" style="margin-bottom:6px">
+          <input type="password" id="share-view-pw" placeholder="Set password for view link...">
+        </div>
       </div>
       <div class="share-section">
-        <div class="share-label">Private read-only (only with link)</div>
-        <div class="share-url-box"><input type="text" value="${viewUrl}" readonly><button data-url="${viewUrl}">Copy</button></div>
+        <div class="share-label">Private edit (password protected)</div>
+        <div class="share-url-box" style="margin-bottom:6px">
+          <input type="password" id="share-edit-pw" placeholder="Set password for edit link...">
+        </div>
       </div>
-      <div class="share-section">
-        <div class="share-label">Private edit (can edit with link)</div>
-        <div class="share-url-box"><input type="text" value="${editUrl}" readonly><button data-url="${editUrl}">Copy</button></div>
-      </div>
-      <p class="share-info">Private links use 32-char tokens. Anyone with the link has the corresponding access.</p>
+      <button class="btn-new-file" id="btn-gen-private" style="margin:8px 0 0">Generate private links</button>
+      <div id="private-links-result"></div>
+      <p class="share-info">Private links require a password to access. Share the link + password separately.</p>
     `;
     modalOverlay.classList.add('show');
 
-    modalBody.querySelectorAll('.share-url-box button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        navigator.clipboard.writeText(btn.dataset.url).then(() => {
-          btn.textContent = 'Copied!';
-          setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+    $('#copy-pub').addEventListener('click', () => {
+      navigator.clipboard.writeText(pubUrl).then(() => { $('#copy-pub').textContent = 'Copied!'; setTimeout(() => { $('#copy-pub').textContent = 'Copy'; }, 2000); });
+    });
+
+    $('#btn-gen-private').addEventListener('click', async () => {
+      const viewPw = $('#share-view-pw').value;
+      const editPw = $('#share-edit-pw').value;
+      if (!viewPw && !editPw) { showToast('Enter at least one password'); return; }
+
+      const res = await fetch('/api/files/' + activeFileId + '/share-private', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ view_password: viewPw, edit_password: editPw })
+      });
+      const data = await res.json();
+      const resultDiv = $('#private-links-result');
+      let html = '';
+      if (viewPw) {
+        const viewUrl = location.origin + '/p/' + data.view_token;
+        html += '<div class="share-section" style="margin-top:10px"><div class="share-label">View link</div><div class="share-url-box"><input type="text" value="' + viewUrl + '" readonly><button data-url="' + viewUrl + '">Copy</button></div></div>';
+      }
+      if (editPw) {
+        const editUrl = location.origin + '/e/' + data.edit_token;
+        html += '<div class="share-section" style="margin-top:6px"><div class="share-label">Edit link</div><div class="share-url-box"><input type="text" value="' + editUrl + '" readonly><button data-url="' + editUrl + '">Copy</button></div></div>';
+      }
+      resultDiv.innerHTML = html;
+      resultDiv.querySelectorAll('[data-url]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          navigator.clipboard.writeText(btn.dataset.url).then(() => { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy'; }, 2000); });
         });
       });
+      showToast('Private links generated');
     });
   }
 
   // ===== Shared/Private view =====
   let privateEditToken = null;
+  let privateEditPassword = null;
   let privateEditSaveTimer = null;
 
   async function checkSharedView() {
-    const path = location.pathname;
+    const p = location.pathname;
 
-    // Public share: /s/{id}
-    const pubMatch = path.match(/^\/s\/(.+)$/);
+    // Public: /s/{id}
+    const pubMatch = p.match(/^\/s\/(.+)$/);
     if (pubMatch) {
       const file = await api.getShared(pubMatch[1]);
       if (!file) { showToast('Shared file not found'); return false; }
@@ -872,27 +897,67 @@ graph TD
     }
 
     // Private view: /p/{token}
-    const viewMatch = path.match(/^\/p\/(.+)$/);
+    const viewMatch = p.match(/^\/p\/(.+)$/);
     if (viewMatch) {
-      const res = await fetch('/api/private/' + viewMatch[1]);
-      if (!res.ok) { showToast('Private link not found or revoked'); return false; }
-      const file = await res.json();
-      setupSharedBanner('private-view', file);
-      return true;
+      return await handlePrivateAccess(viewMatch[1], 'view');
     }
 
     // Private edit: /e/{token}
-    const editMatch = path.match(/^\/e\/(.+)$/);
+    const editMatch = p.match(/^\/e\/(.+)$/);
     if (editMatch) {
-      const res = await fetch('/api/private-edit/' + editMatch[1]);
-      if (!res.ok) { showToast('Edit link not found or revoked'); return false; }
-      const file = await res.json();
-      privateEditToken = editMatch[1];
-      setupSharedBanner('private-edit', file);
-      return true;
+      return await handlePrivateAccess(editMatch[1], 'edit');
     }
 
     return false;
+  }
+
+  async function handlePrivateAccess(token, mode) {
+    const endpoint = mode === 'edit' ? '/api/private-edit/' : '/api/private/';
+    const checkRes = await fetch(endpoint + token + '/check');
+    if (!checkRes.ok) { showToast('Link not found or revoked'); return false; }
+    const checkData = await checkRes.json();
+
+    if (checkData.needs_password) {
+      return new Promise(resolve => {
+        showPasswordPrompt(checkData.name || 'Private document', async (password) => {
+          const authRes = await fetch(endpoint + token + '/auth', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password })
+          });
+          if (!authRes.ok) { showToast('Wrong password'); resolve(await handlePrivateAccess(token, mode)); return; }
+          const file = await authRes.json();
+          if (mode === 'edit') { privateEditToken = token; privateEditPassword = password; }
+          setupSharedBanner(mode === 'edit' ? 'private-edit' : 'private-view', file);
+          resolve(true);
+        });
+      });
+    } else {
+      const authRes = await fetch(endpoint + token + '/auth', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: '' })
+      });
+      const file = await authRes.json();
+      if (mode === 'edit') { privateEditToken = token; privateEditPassword = ''; }
+      setupSharedBanner(mode === 'edit' ? 'private-edit' : 'private-view', file);
+      return true;
+    }
+  }
+
+  function showPasswordPrompt(docName, onSubmit) {
+    modalTitle.textContent = 'Password required';
+    modalBody.innerHTML = `
+      <p style="margin-bottom:12px;color:var(--text-2);font-size:13px">"${escapeHtml(docName)}" is password protected.</p>
+      <div class="share-url-box">
+        <input type="password" id="pw-prompt-input" placeholder="Enter password..." autofocus>
+        <button id="pw-prompt-submit">Unlock</button>
+      </div>
+    `;
+    modalOverlay.classList.add('show');
+    const input = $('#pw-prompt-input');
+    const submit = () => { modalOverlay.classList.remove('show'); onSubmit(input.value); };
+    $('#pw-prompt-submit').addEventListener('click', submit);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    input.focus();
   }
 
   function setupSharedBanner(mode, file) {
@@ -907,7 +972,7 @@ graph TD
     if (mode === 'private-edit') {
       cm.setOption('readOnly', false);
       fileNameInput.readOnly = false;
-      bannerText.textContent = '🔓 Private edit mode — changes are saved';
+      bannerText.textContent = 'Private edit mode — changes are saved';
       forkBtn.style.display = 'none';
 
       cm.on('changes', () => {
@@ -915,7 +980,7 @@ graph TD
         privateEditSaveTimer = setTimeout(async () => {
           await fetch('/api/private-edit/' + privateEditToken, {
             method: 'PUT', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ content: cm.getValue() })
+            body: JSON.stringify({ password: privateEditPassword, content: cm.getValue() })
           });
           showSaveStatus('Saved');
         }, 500);
@@ -926,7 +991,7 @@ graph TD
         privateEditSaveTimer = setTimeout(async () => {
           await fetch('/api/private-edit/' + privateEditToken, {
             method: 'PUT', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: fileNameInput.value })
+            body: JSON.stringify({ password: privateEditPassword, name: fileNameInput.value })
           });
           showSaveStatus('Saved');
         }, 400);
@@ -935,8 +1000,8 @@ graph TD
       cm.setOption('readOnly', true);
       fileNameInput.readOnly = true;
       bannerText.textContent = mode === 'private-view'
-        ? '🔒 Private read-only view'
-        : '📄 Public shared document';
+        ? 'Private read-only view'
+        : 'Public shared document';
       forkBtn.addEventListener('click', async () => {
         const match = location.pathname.match(/^\/s\/(.+)$/);
         if (match) { await api.forkShared(match[1]); location.href = '/'; }
