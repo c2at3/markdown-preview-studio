@@ -325,6 +325,7 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
   flex-direction: column;
   min-width: 0;
   height: 100vh;
+  position: relative;
 }
 
 /* ===== TOOLBAR ===== */
@@ -460,15 +461,21 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
 
 /* ===== FIND/REPLACE PANEL ===== */
 .find-panel {
-  background: rgba(248, 249, 251, 0.85);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  position: absolute;
+  bottom: var(--statusbar-h);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  background: rgba(248, 249, 251, 0.8);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-top: 1px solid var(--border);
   padding: 8px 12px;
-  flex-shrink: 0;
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.06);
 }
 body.dark .find-panel {
-  background: rgba(26, 29, 36, 0.85);
+  background: rgba(26, 29, 36, 0.8);
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.3);
 }
 .find-panel-tabs {
   display: flex;
