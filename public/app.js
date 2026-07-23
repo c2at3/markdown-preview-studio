@@ -817,14 +817,19 @@ graph TD
   // ===== Share =====
   async function shareCurrentFile() {
     if (!activeFileId) return;
-    const pubResult = await api.shareFile(activeFileId);
-    const pubUrl = location.origin + '/s/' + pubResult.share_id;
+
+    // Check if public link already exists
+    const file = await api.getFile(activeFileId);
+    const hasPublic = !!file.share_id;
 
     modalTitle.textContent = 'Share';
     modalBody.innerHTML = `
       <div class="share-section">
         <div class="share-label">Public (anyone can view & fork)</div>
-        <div class="share-url-box"><input type="text" value="${pubUrl}" readonly><button id="copy-pub">Copy</button></div>
+        ${hasPublic
+          ? '<div class="share-url-box"><input type="text" id="pub-url" value="' + location.origin + '/s/' + file.share_id + '" readonly><button id="copy-pub">Copy</button></div>'
+          : '<button class="btn-new-folder" id="btn-gen-public" style="margin:0;width:auto">Generate public link</button><div id="pub-link-result"></div>'
+        }
       </div>
       <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
       <div class="share-section">
@@ -845,9 +850,23 @@ graph TD
     `;
     modalOverlay.classList.add('show');
 
-    $('#copy-pub').addEventListener('click', () => {
-      navigator.clipboard.writeText(pubUrl).then(() => { $('#copy-pub').textContent = 'Copied!'; setTimeout(() => { $('#copy-pub').textContent = 'Copy'; }, 2000); });
-    });
+    if (hasPublic) {
+      $('#copy-pub').addEventListener('click', () => {
+        const url = $('#pub-url').value;
+        navigator.clipboard.writeText(url).then(() => { $('#copy-pub').textContent = 'Copied!'; setTimeout(() => { $('#copy-pub').textContent = 'Copy'; }, 2000); });
+      });
+    } else {
+      $('#btn-gen-public').addEventListener('click', async () => {
+        const pubResult = await api.shareFile(activeFileId);
+        const pubUrl = location.origin + '/s/' + pubResult.share_id;
+        $('#btn-gen-public').style.display = 'none';
+        $('#pub-link-result').innerHTML = '<div class="share-url-box"><input type="text" value="' + pubUrl + '" readonly><button id="copy-pub-new">Copy</button></div>';
+        $('#copy-pub-new').addEventListener('click', () => {
+          navigator.clipboard.writeText(pubUrl).then(() => { $('#copy-pub-new').textContent = 'Copied!'; setTimeout(() => { $('#copy-pub-new').textContent = 'Copy'; }, 2000); });
+        });
+        showToast('Public link created');
+      });
+    }
 
     $('#btn-gen-private').addEventListener('click', async () => {
       const viewPw = $('#share-view-pw').value;
