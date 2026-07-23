@@ -216,29 +216,35 @@ app.post('/api/files/:id/share', (req, res) => {
   res.json({ share_id: shareId });
 });
 
-// Private share (token + password)
+// Private share (token + password) — only creates what's requested
 app.post('/api/files/:id/share-private', (req, res) => {
   const file = get('SELECT * FROM files WHERE id = ?', [req.params.id]);
   if (!file) return res.status(404).json({ error: 'Not found' });
   const { view_password, edit_password } = req.body;
 
-  let viewToken = file.private_view_token;
-  let editToken = file.private_edit_token;
-  if (!viewToken) { viewToken = nanoid(16); }
-  if (!editToken) { editToken = nanoid(16); }
+  const sets = [], vals = [];
+  let viewToken = file.private_view_token, editToken = file.private_edit_token;
 
-  const viewPwHash = view_password ? hashPassword(view_password) : (file.private_view_pw || null);
-  const editPwHash = edit_password ? hashPassword(edit_password) : (file.private_edit_pw || null);
+  if (view_password) {
+    if (!viewToken) viewToken = nanoid(16);
+    sets.push('private_view_token = ?', 'private_view_pw = ?');
+    vals.push(viewToken, hashPassword(view_password));
+  }
+  if (edit_password) {
+    if (!editToken) editToken = nanoid(16);
+    sets.push('private_edit_token = ?', 'private_edit_pw = ?');
+    vals.push(editToken, hashPassword(edit_password));
+  }
 
-  run('UPDATE files SET private_view_token = ?, private_edit_token = ?, private_view_pw = ?, private_edit_pw = ? WHERE id = ?',
-    [viewToken, editToken, viewPwHash, editPwHash, req.params.id]);
-  scheduleSave();
+  if (sets.length) {
+    vals.push(req.params.id);
+    run(`UPDATE files SET ${sets.join(', ')} WHERE id = ?`, vals);
+    scheduleSave();
+  }
 
   res.json({
-    view_token: viewToken,
-    edit_token: editToken,
-    has_view_pw: !!viewPwHash,
-    has_edit_pw: !!editPwHash
+    view_token: view_password ? viewToken : file.private_view_token,
+    edit_token: edit_password ? editToken : file.private_edit_token
   });
 });
 
