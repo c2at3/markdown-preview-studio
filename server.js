@@ -196,6 +196,13 @@ app.delete('/api/files/:id', (req, res) => {
 });
 
 // ===== SHARING =====
+// Revoke public share
+app.delete('/api/files/:id/share', (req, res) => {
+  run('UPDATE files SET share_id = NULL WHERE id = ?', [req.params.id]);
+  scheduleSave();
+  res.json({ ok: true });
+});
+
 // Public share (short token, no password)
 app.post('/api/files/:id/share', (req, res) => {
   const file = get('SELECT * FROM files WHERE id = ?', [req.params.id]);
@@ -237,7 +244,10 @@ app.post('/api/files/:id/share-private', (req, res) => {
 
 // Revoke private share
 app.delete('/api/files/:id/share-private', (req, res) => {
-  run('UPDATE files SET private_view_token = NULL, private_edit_token = NULL, private_view_pw = NULL, private_edit_pw = NULL WHERE id = ?', [req.params.id]);
+  const { type } = req.body || {};
+  if (type === 'view') run('UPDATE files SET private_view_token = NULL, private_view_pw = NULL WHERE id = ?', [req.params.id]);
+  else if (type === 'edit') run('UPDATE files SET private_edit_token = NULL, private_edit_pw = NULL WHERE id = ?', [req.params.id]);
+  else run('UPDATE files SET private_view_token = NULL, private_edit_token = NULL, private_view_pw = NULL, private_edit_pw = NULL WHERE id = ?', [req.params.id]);
   scheduleSave();
   res.json({ ok: true });
 });

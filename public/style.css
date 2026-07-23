@@ -1182,6 +1182,19 @@ body.dark .cm-attribute { color: #ffcb6b; }
 }
 .share-url-box button:hover { background: var(--accent-hover); }
 
+.share-revoke-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 12px;
+  transition: all 0.1s;
+  white-space: nowrap;
+}
+.share-revoke-btn:hover { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
+
 .share-section {
   margin-bottom: 12px;
 }

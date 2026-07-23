@@ -818,84 +818,114 @@ graph TD
   async function shareCurrentFile() {
     if (!activeFileId) return;
 
-    // Check if public link already exists
     const file = await api.getFile(activeFileId);
     const hasPublic = !!file.share_id;
+    const hasPrivate = !!(file.private_view_token || file.private_edit_token);
 
     modalTitle.textContent = 'Share';
     modalBody.innerHTML = `
       <div class="share-section">
         <div class="share-label">Public (anyone can view & fork)</div>
-        ${hasPublic
-          ? '<div class="share-url-box"><input type="text" id="pub-url" value="' + location.origin + '/s/' + file.share_id + '" readonly><button id="copy-pub">Copy</button></div>'
-          : '<button class="btn-new-folder" id="btn-gen-public" style="margin:0;width:auto">Generate public link</button><div id="pub-link-result"></div>'
-        }
+        <div id="pub-area">
+          ${hasPublic
+            ? '<div class="share-url-box"><input type="text" value="' + location.origin + '/s/' + file.share_id + '" readonly><button id="copy-pub">Copy</button><button id="revoke-pub" class="share-revoke-btn" title="Revoke">✕</button></div>'
+            : '<button class="btn-new-folder" id="btn-gen-public" style="margin:0;width:auto">Generate public link</button>'
+          }
+        </div>
       </div>
       <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
       <div class="share-section">
         <div class="share-label">Private read-only (password protected)</div>
-        <div class="share-url-box" style="margin-bottom:6px">
-          <input type="password" id="share-view-pw" placeholder="Set password for view link...">
-        </div>
+        ${hasPrivate && file.private_view_token
+          ? '<div id="priv-view-area"><div class="share-url-box"><input type="text" value="' + location.origin + '/p/' + file.private_view_token + '" readonly><button data-url="' + location.origin + '/p/' + file.private_view_token + '">Copy</button><button id="revoke-view" class="share-revoke-btn" title="Revoke">✕</button></div></div>'
+          : '<div id="priv-view-area"><div class="share-url-box" style="margin-bottom:6px"><input type="password" id="share-view-pw" placeholder="Set password for view link..."></div></div>'
+        }
       </div>
       <div class="share-section">
         <div class="share-label">Private edit (password protected)</div>
-        <div class="share-url-box" style="margin-bottom:6px">
-          <input type="password" id="share-edit-pw" placeholder="Set password for edit link...">
-        </div>
+        ${hasPrivate && file.private_edit_token
+          ? '<div id="priv-edit-area"><div class="share-url-box"><input type="text" value="' + location.origin + '/e/' + file.private_edit_token + '" readonly><button data-url="' + location.origin + '/e/' + file.private_edit_token + '">Copy</button><button id="revoke-edit" class="share-revoke-btn" title="Revoke">✕</button></div></div>'
+          : '<div id="priv-edit-area"><div class="share-url-box" style="margin-bottom:6px"><input type="password" id="share-edit-pw" placeholder="Set password for edit link..."></div></div>'
+        }
       </div>
-      <button class="btn-new-file" id="btn-gen-private" style="margin:8px 0 0">Generate private links</button>
+      ${(!hasPrivate || !file.private_view_token || !file.private_edit_token) ? '<button class="btn-new-file" id="btn-gen-private" style="margin:8px 0 0">Generate private links</button>' : ''}
       <div id="private-links-result"></div>
-      <p class="share-info">Private links require a password to access. Share the link + password separately.</p>
+      <p class="share-info">Private links require a password. Share link + password separately.</p>
     `;
     modalOverlay.classList.add('show');
 
-    if (hasPublic) {
-      $('#copy-pub').addEventListener('click', () => {
-        const url = $('#pub-url').value;
-        navigator.clipboard.writeText(url).then(() => { $('#copy-pub').textContent = 'Copied!'; setTimeout(() => { $('#copy-pub').textContent = 'Copy'; }, 2000); });
+    // Copy buttons
+    modalBody.querySelectorAll('[data-url]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        navigator.clipboard.writeText(btn.dataset.url).then(() => { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy'; }, 2000); });
       });
-    } else {
-      $('#btn-gen-public').addEventListener('click', async () => {
-        const pubResult = await api.shareFile(activeFileId);
-        const pubUrl = location.origin + '/s/' + pubResult.share_id;
-        $('#btn-gen-public').style.display = 'none';
-        $('#pub-link-result').innerHTML = '<div class="share-url-box"><input type="text" value="' + pubUrl + '" readonly><button id="copy-pub-new">Copy</button></div>';
-        $('#copy-pub-new').addEventListener('click', () => {
-          navigator.clipboard.writeText(pubUrl).then(() => { $('#copy-pub-new').textContent = 'Copied!'; setTimeout(() => { $('#copy-pub-new').textContent = 'Copy'; }, 2000); });
-        });
-        showToast('Public link created');
+    });
+
+    if ($('#copy-pub')) {
+      $('#copy-pub').addEventListener('click', () => {
+        const url = location.origin + '/s/' + file.share_id;
+        navigator.clipboard.writeText(url).then(() => { $('#copy-pub').textContent = 'Copied!'; setTimeout(() => { $('#copy-pub').textContent = 'Copy'; }, 2000); });
       });
     }
 
-    $('#btn-gen-private').addEventListener('click', async () => {
-      const viewPw = $('#share-view-pw').value;
-      const editPw = $('#share-edit-pw').value;
-      if (!viewPw && !editPw) { showToast('Enter at least one password'); return; }
+    // Generate public
+    if ($('#btn-gen-public')) {
+      $('#btn-gen-public').addEventListener('click', async () => {
+        const r = await api.shareFile(activeFileId);
+        modalOverlay.classList.remove('show');
+        showToast('Public link created');
+        shareCurrentFile();
+      });
+    }
 
-      const res = await fetch('/api/files/' + activeFileId + '/share-private', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ view_password: viewPw, edit_password: editPw })
+    // Revoke public
+    if ($('#revoke-pub')) {
+      $('#revoke-pub').addEventListener('click', async () => {
+        if (!confirm('Revoke public link? Anyone with the link will lose access.')) return;
+        await fetch('/api/files/' + activeFileId + '/share', { method: 'DELETE' });
+        modalOverlay.classList.remove('show');
+        showToast('Public link revoked');
+        shareCurrentFile();
       });
-      const data = await res.json();
-      const resultDiv = $('#private-links-result');
-      let html = '';
-      if (viewPw) {
-        const viewUrl = location.origin + '/p/' + data.view_token;
-        html += '<div class="share-section" style="margin-top:10px"><div class="share-label">View link</div><div class="share-url-box"><input type="text" value="' + viewUrl + '" readonly><button data-url="' + viewUrl + '">Copy</button></div></div>';
-      }
-      if (editPw) {
-        const editUrl = location.origin + '/e/' + data.edit_token;
-        html += '<div class="share-section" style="margin-top:6px"><div class="share-label">Edit link</div><div class="share-url-box"><input type="text" value="' + editUrl + '" readonly><button data-url="' + editUrl + '">Copy</button></div></div>';
-      }
-      resultDiv.innerHTML = html;
-      resultDiv.querySelectorAll('[data-url]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          navigator.clipboard.writeText(btn.dataset.url).then(() => { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy'; }, 2000); });
+    }
+
+    // Revoke private view
+    if ($('#revoke-view')) {
+      $('#revoke-view').addEventListener('click', async () => {
+        if (!confirm('Revoke private view link?')) return;
+        await fetch('/api/files/' + activeFileId + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'view' }) });
+        modalOverlay.classList.remove('show');
+        showToast('View link revoked');
+        shareCurrentFile();
+      });
+    }
+
+    // Revoke private edit
+    if ($('#revoke-edit')) {
+      $('#revoke-edit').addEventListener('click', async () => {
+        if (!confirm('Revoke private edit link?')) return;
+        await fetch('/api/files/' + activeFileId + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'edit' }) });
+        modalOverlay.classList.remove('show');
+        showToast('Edit link revoked');
+        shareCurrentFile();
+      });
+    }
+
+    // Generate private
+    if ($('#btn-gen-private')) {
+      $('#btn-gen-private').addEventListener('click', async () => {
+        const viewPw = $('#share-view-pw')?.value;
+        const editPw = $('#share-edit-pw')?.value;
+        if (!viewPw && !editPw) { showToast('Enter at least one password'); return; }
+        await fetch('/api/files/' + activeFileId + '/share-private', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ view_password: viewPw, edit_password: editPw })
         });
+        modalOverlay.classList.remove('show');
+        showToast('Private links generated');
+        shareCurrentFile();
       });
-      showToast('Private links generated');
-    });
+    }
   }
 
   // ===== Shared/Private view =====
