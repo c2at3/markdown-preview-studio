@@ -78,12 +78,16 @@ async function initDb() {
     )
   `);
 
-  // Migrate: add folder_id and sort_order if missing
+  // Migrations
   try { db.run('ALTER TABLE files ADD COLUMN folder_id TEXT'); } catch (e) {}
   try { db.run('ALTER TABLE files ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
+  try { db.run('ALTER TABLE files ADD COLUMN private_view_token TEXT'); } catch (e) {}
+  try { db.run('ALTER TABLE files ADD COLUMN private_edit_token TEXT'); } catch (e) {}
 
   db.run('CREATE INDEX IF NOT EXISTS idx_files_share_id ON files(share_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_id)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_files_pvt_view ON files(private_view_token)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_files_pvt_edit ON files(private_edit_token)');
   saveDb();
 }
 
@@ -186,6 +190,8 @@ app.delete('/api/files/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// ===== SHARING =====
+// Public share (short token)
 app.post('/api/files/:id/share', (req, res) => {
   const file = get('SELECT * FROM files WHERE id = ?', [req.params.id]);
   if (!file) return res.status(404).json({ error: 'Not found' });
@@ -198,6 +204,29 @@ app.post('/api/files/:id/share', (req, res) => {
   res.json({ share_id: shareId });
 });
 
+// Private share (long tokens)
+app.post('/api/files/:id/share-private', (req, res) => {
+  const file = get('SELECT * FROM files WHERE id = ?', [req.params.id]);
+  if (!file) return res.status(404).json({ error: 'Not found' });
+  let viewToken = file.private_view_token;
+  let editToken = file.private_edit_token;
+  if (!viewToken) { viewToken = nanoid(32); run('UPDATE files SET private_view_token = ? WHERE id = ?', [viewToken, req.params.id]); }
+  if (!editToken) { editToken = nanoid(32); run('UPDATE files SET private_edit_token = ? WHERE id = ?', [editToken, req.params.id]); }
+  scheduleSave();
+  res.json({ view_token: viewToken, edit_token: editToken });
+});
+
+// Revoke private tokens
+app.delete('/api/files/:id/share-private', (req, res) => {
+  const { type } = req.body || {};
+  if (type === 'view') run('UPDATE files SET private_view_token = NULL WHERE id = ?', [req.params.id]);
+  else if (type === 'edit') run('UPDATE files SET private_edit_token = NULL WHERE id = ?', [req.params.id]);
+  else { run('UPDATE files SET private_view_token = NULL, private_edit_token = NULL WHERE id = ?', [req.params.id]); }
+  scheduleSave();
+  res.json({ ok: true });
+});
+
+// Public share endpoints
 app.get('/api/shared/:shareId', (req, res) => {
   const file = get('SELECT id, name, content, share_id, created_at, updated_at FROM files WHERE share_id = ?', [req.params.shareId]);
   if (!file) return res.status(404).json({ error: 'Not found' });
@@ -211,6 +240,35 @@ app.post('/api/shared/:shareId/fork', (req, res) => {
   run('INSERT INTO files (id, name, content) VALUES (?, ?, ?)', [id, source.name + ' (copy)', source.content]);
   scheduleSave();
   res.status(201).json(get('SELECT * FROM files WHERE id = ?', [id]));
+});
+
+// Private view endpoint
+app.get('/api/private/:token', (req, res) => {
+  const file = get('SELECT id, name, content, created_at, updated_at FROM files WHERE private_view_token = ? OR private_edit_token = ?', [req.params.token, req.params.token]);
+  if (!file) return res.status(404).json({ error: 'Not found' });
+  res.json(file);
+});
+
+// Private edit endpoints
+app.get('/api/private-edit/:token', (req, res) => {
+  const file = get('SELECT id, name, content, created_at, updated_at FROM files WHERE private_edit_token = ?', [req.params.token]);
+  if (!file) return res.status(404).json({ error: 'Not found' });
+  res.json(file);
+});
+
+app.put('/api/private-edit/:token', (req, res) => {
+  const file = get('SELECT id FROM files WHERE private_edit_token = ?', [req.params.token]);
+  if (!file) return res.status(404).json({ error: 'Not found' });
+  const { name, content } = req.body;
+  const sets = [], vals = [];
+  if (name !== undefined) { sets.push('name = ?'); vals.push(name); }
+  if (content !== undefined) { sets.push('content = ?'); vals.push(content); }
+  if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+  sets.push("updated_at = datetime('now')");
+  vals.push(file.id);
+  run(`UPDATE files SET ${sets.join(', ')} WHERE id = ?`, vals);
+  scheduleSave();
+  res.json(get('SELECT id, name, content, created_at, updated_at FROM files WHERE id = ?', [file.id]));
 });
 
 // ===== IMAGE UPLOAD =====
@@ -280,9 +338,10 @@ app.post('/api/upload', (req, res) => {
 });
 
 // ===== SPA FALLBACK =====
-app.get('/s/:shareId', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+const serveIndex = (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html'));
+app.get('/s/:shareId', serveIndex);
+app.get('/p/:token', serveIndex);
+app.get('/e/:token', serveIndex);
 
 initDb().then(() => {
   app.listen(PORT, () => {

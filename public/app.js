@@ -817,26 +817,139 @@ graph TD
   // ===== Share =====
   async function shareCurrentFile() {
     if (!activeFileId) return;
-    const { share_id } = await api.shareFile(activeFileId);
-    const url = location.origin + '/s/' + share_id;
-    modalTitle.textContent = 'Share Link';
-    modalBody.innerHTML = `<div class="share-url-box"><input type="text" id="share-url" value="${url}" readonly><button id="btn-copy-share">Copy</button></div><p class="share-info">Anyone with this link can view and fork a copy of this document.</p>`;
+
+    const [pubResult, privResult] = await Promise.all([
+      api.shareFile(activeFileId),
+      fetch('/api/files/' + activeFileId + '/share-private', { method: 'POST' }).then(r => r.json())
+    ]);
+
+    const pubUrl = location.origin + '/s/' + pubResult.share_id;
+    const viewUrl = location.origin + '/p/' + privResult.view_token;
+    const editUrl = location.origin + '/e/' + privResult.edit_token;
+
+    modalTitle.textContent = 'Share';
+    modalBody.innerHTML = `
+      <div class="share-section">
+        <div class="share-label">Public (anyone can view & fork)</div>
+        <div class="share-url-box"><input type="text" value="${pubUrl}" readonly><button data-url="${pubUrl}">Copy</button></div>
+      </div>
+      <div class="share-section">
+        <div class="share-label">Private read-only (only with link)</div>
+        <div class="share-url-box"><input type="text" value="${viewUrl}" readonly><button data-url="${viewUrl}">Copy</button></div>
+      </div>
+      <div class="share-section">
+        <div class="share-label">Private edit (can edit with link)</div>
+        <div class="share-url-box"><input type="text" value="${editUrl}" readonly><button data-url="${editUrl}">Copy</button></div>
+      </div>
+      <p class="share-info">Private links use 32-char tokens. Anyone with the link has the corresponding access.</p>
+    `;
     modalOverlay.classList.add('show');
-    $('#btn-copy-share').addEventListener('click', () => { navigator.clipboard.writeText(url).then(() => { $('#btn-copy-share').textContent = 'Copied!'; setTimeout(() => { $('#btn-copy-share').textContent = 'Copy'; }, 2000); }); });
+
+    modalBody.querySelectorAll('.share-url-box button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        navigator.clipboard.writeText(btn.dataset.url).then(() => {
+          btn.textContent = 'Copied!';
+          setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+        });
+      });
+    });
   }
 
-  // ===== Shared view =====
+  // ===== Shared/Private view =====
+  let privateEditToken = null;
+  let privateEditSaveTimer = null;
+
   async function checkSharedView() {
-    const match = location.pathname.match(/^\/s\/(.+)$/); if (!match) return false;
-    const file = await api.getShared(match[1]); if (!file) { showToast('Shared file not found'); return false; }
-    isSharedView = true; cm.setValue(file.content); fileNameInput.value = file.name;
-    fileNameInput.readOnly = true; cm.setOption('readOnly', true);
+    const path = location.pathname;
+
+    // Public share: /s/{id}
+    const pubMatch = path.match(/^\/s\/(.+)$/);
+    if (pubMatch) {
+      const file = await api.getShared(pubMatch[1]);
+      if (!file) { showToast('Shared file not found'); return false; }
+      setupSharedBanner('public', file);
+      return true;
+    }
+
+    // Private view: /p/{token}
+    const viewMatch = path.match(/^\/p\/(.+)$/);
+    if (viewMatch) {
+      const res = await fetch('/api/private/' + viewMatch[1]);
+      if (!res.ok) { showToast('Private link not found or revoked'); return false; }
+      const file = await res.json();
+      setupSharedBanner('private-view', file);
+      return true;
+    }
+
+    // Private edit: /e/{token}
+    const editMatch = path.match(/^\/e\/(.+)$/);
+    if (editMatch) {
+      const res = await fetch('/api/private-edit/' + editMatch[1]);
+      if (!res.ok) { showToast('Edit link not found or revoked'); return false; }
+      const file = await res.json();
+      privateEditToken = editMatch[1];
+      setupSharedBanner('private-edit', file);
+      return true;
+    }
+
+    return false;
+  }
+
+  function setupSharedBanner(mode, file) {
+    isSharedView = true;
+    cm.setValue(file.content);
+    fileNameInput.value = file.name;
+
+    const banner = $('#shared-banner');
+    const bannerText = banner.querySelector('span');
+    const forkBtn = $('#btn-fork');
+
+    if (mode === 'private-edit') {
+      cm.setOption('readOnly', false);
+      fileNameInput.readOnly = false;
+      bannerText.textContent = '🔓 Private edit mode — changes are saved';
+      forkBtn.style.display = 'none';
+
+      cm.on('changes', () => {
+        clearTimeout(privateEditSaveTimer);
+        privateEditSaveTimer = setTimeout(async () => {
+          await fetch('/api/private-edit/' + privateEditToken, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: cm.getValue() })
+          });
+          showSaveStatus('Saved');
+        }, 500);
+      });
+
+      fileNameInput.addEventListener('input', () => {
+        clearTimeout(privateEditSaveTimer);
+        privateEditSaveTimer = setTimeout(async () => {
+          await fetch('/api/private-edit/' + privateEditToken, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: fileNameInput.value })
+          });
+          showSaveStatus('Saved');
+        }, 400);
+      });
+    } else {
+      cm.setOption('readOnly', true);
+      fileNameInput.readOnly = true;
+      bannerText.textContent = mode === 'private-view'
+        ? '🔒 Private read-only view'
+        : '📄 Public shared document';
+      forkBtn.addEventListener('click', async () => {
+        const match = location.pathname.match(/^\/s\/(.+)$/);
+        if (match) { await api.forkShared(match[1]); location.href = '/'; }
+        else { showToast('Fork is only available for public shares'); }
+      });
+    }
+
     render();
-    $('#shared-banner').style.display = 'block'; $('.main').style.marginTop = '38px';
-    sidebar.classList.add('collapsed'); $('#btn-open-sidebar').style.display = 'none';
-    $('#btn-fork').addEventListener('click', async () => { await api.forkShared(match[1]); location.href = '/'; });
-    $('#btn-close-banner').addEventListener('click', () => { $('#shared-banner').style.display = 'none'; $('.main').style.marginTop = '0'; });
-    return true;
+    banner.style.display = 'block';
+    $('.main').style.marginTop = '38px';
+    sidebar.classList.add('collapsed');
+    $('#btn-open-sidebar').style.display = 'none';
+    $('#btn-close-banner').addEventListener('click', () => { banner.style.display = 'none'; $('.main').style.marginTop = '0'; });
   }
 
   // ===== Toolbar insert helpers =====
