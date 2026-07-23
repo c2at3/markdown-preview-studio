@@ -460,10 +460,15 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
 
 /* ===== FIND/REPLACE PANEL ===== */
 .find-panel {
-  background: var(--bg-alt);
+  background: rgba(248, 249, 251, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border-top: 1px solid var(--border);
   padding: 8px 12px;
   flex-shrink: 0;
+}
+body.dark .find-panel {
+  background: rgba(26, 29, 36, 0.85);
 }
 .find-panel-tabs {
   display: flex;
