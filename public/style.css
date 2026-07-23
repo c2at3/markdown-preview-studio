@@ -1183,17 +1183,19 @@ body.dark .cm-attribute { color: #ffcb6b; }
 .share-url-box button:hover { background: var(--accent-hover); }
 
 .share-revoke-btn {
-  background: none;
-  border: 1px solid var(--border);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
   border-radius: var(--radius-sm);
-  color: var(--text-3);
+  color: var(--danger);
   cursor: pointer;
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-sans);
   transition: all 0.1s;
   white-space: nowrap;
 }
-.share-revoke-btn:hover { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
+.share-revoke-btn:hover { background: var(--danger); color: #fff; }
 
 .share-section {
   margin-bottom: 12px;

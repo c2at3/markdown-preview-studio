@@ -828,7 +828,7 @@ graph TD
         <div class="share-label">Public (anyone can view & fork)</div>
         <div id="pub-area">
           ${hasPublic
-            ? '<div class="share-url-box"><input type="text" value="' + location.origin + '/s/' + file.share_id + '" readonly><button id="copy-pub">Copy</button><button id="revoke-pub" class="share-revoke-btn" title="Revoke">✕</button></div>'
+            ? '<div class="share-url-box"><input type="text" value="' + location.origin + '/s/' + file.share_id + '" readonly><button id="copy-pub">Copy</button><button id="revoke-pub" class="share-revoke-btn" title="Revoke">Revoke</button></div>'
             : '<button class="btn-new-folder" id="btn-gen-public" style="margin:0;width:auto">Generate public link</button>'
           }
         </div>
@@ -837,14 +837,14 @@ graph TD
       <div class="share-section">
         <div class="share-label">Private read-only (password protected)</div>
         ${hasPrivate && file.private_view_token
-          ? '<div id="priv-view-area"><div class="share-url-box"><input type="text" value="' + location.origin + '/p/' + file.private_view_token + '" readonly><button data-url="' + location.origin + '/p/' + file.private_view_token + '">Copy</button><button id="revoke-view" class="share-revoke-btn" title="Revoke">✕</button></div></div>'
+          ? '<div id="priv-view-area"><div class="share-url-box"><input type="text" value="' + location.origin + '/p/' + file.private_view_token + '" readonly><button data-url="' + location.origin + '/p/' + file.private_view_token + '">Copy</button><button id="revoke-view" class="share-revoke-btn" title="Revoke">Revoke</button></div></div>'
           : '<div id="priv-view-area"><div class="share-url-box" style="margin-bottom:6px"><input type="password" id="share-view-pw" placeholder="Set password for view link..."></div></div>'
         }
       </div>
       <div class="share-section">
         <div class="share-label">Private edit (password protected)</div>
         ${hasPrivate && file.private_edit_token
-          ? '<div id="priv-edit-area"><div class="share-url-box"><input type="text" value="' + location.origin + '/e/' + file.private_edit_token + '" readonly><button data-url="' + location.origin + '/e/' + file.private_edit_token + '">Copy</button><button id="revoke-edit" class="share-revoke-btn" title="Revoke">✕</button></div></div>'
+          ? '<div id="priv-edit-area"><div class="share-url-box"><input type="text" value="' + location.origin + '/e/' + file.private_edit_token + '" readonly><button data-url="' + location.origin + '/e/' + file.private_edit_token + '">Copy</button><button id="revoke-edit" class="share-revoke-btn" title="Revoke">Revoke</button></div></div>'
           : '<div id="priv-edit-area"><div class="share-url-box" style="margin-bottom:6px"><input type="password" id="share-edit-pw" placeholder="Set password for edit link..."></div></div>'
         }
       </div>
