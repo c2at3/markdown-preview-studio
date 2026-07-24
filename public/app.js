@@ -607,6 +607,42 @@ graph TD
     tab.addEventListener('click', () => { $$('.find-tab').forEach(t => t.classList.remove('active')); tab.classList.add('active'); findScope = tab.dataset.scope; doFind(); });
   });
 
+  // ===== Folder color context menu =====
+  const FOLDER_COLORS = [
+    { name: 'Red', value: '#ef4444' },
+    { name: 'Orange', value: '#f97316' },
+    { name: 'Yellow', value: '#eab308' },
+    { name: 'Green', value: '#22c55e' },
+    { name: 'Blue', value: '#3b82f6' },
+    { name: 'Purple', value: '#a855f7' },
+    { name: 'Pink', value: '#ec4899' },
+    { name: 'Teal', value: '#14b8a6' },
+    { name: 'Gray', value: '#6b7280' },
+  ];
+
+  const ctxMenu = $('#context-menu');
+  const ctxColors = $('#context-menu-colors');
+  let ctxFolderId = null;
+
+  // Build color swatches
+  let colorsHTML = '<div class="ctx-color ctx-none" data-color="" title="No color">✕</div>';
+  FOLDER_COLORS.forEach(c => { colorsHTML += '<div class="ctx-color" data-color="' + c.value + '" style="background:' + c.value + '" title="' + c.name + '"></div>'; });
+  ctxColors.innerHTML = colorsHTML;
+
+  ctxColors.addEventListener('click', async (e) => {
+    const swatch = e.target.closest('.ctx-color');
+    if (!swatch || !ctxFolderId) return;
+    const color = swatch.dataset.color;
+    await api.updateFolder(ctxFolderId, { color: color || null });
+    ctxMenu.style.display = 'none';
+    await loadAll();
+  });
+
+  document.addEventListener('click', () => { ctxMenu.style.display = 'none'; });
+  document.addEventListener('contextmenu', (e) => {
+    if (!e.target.closest('.folder-header')) { ctxMenu.style.display = 'none'; return; }
+  });
+
   // Find results resizer
   (() => {
     const resizer = $('#find-results-resizer');
@@ -649,7 +685,19 @@ graph TD
     const childFiles = files.filter(f => f.folder_id === folder.id).sort((a, b) => a.sort_order - b.sort_order);
     const el = document.createElement('div'); el.className = 'folder-item'; el.dataset.folderId = folder.id;
     const header = document.createElement('div'); header.className = 'folder-header'; header.draggable = true;
-    header.innerHTML = `<svg class="folder-chevron ${folder.collapsed ? 'collapsed' : ''}" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg><svg class="folder-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg><span class="folder-name">${escapeHtml(folder.name)}</span><div class="folder-actions"><button data-action="add-file" title="New file here"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button><button class="btn-delete-folder" data-action="delete-folder" title="Delete folder"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>`;
+    const folderColor = folder.color || '';
+    const iconFill = folderColor || 'none';
+    const iconStroke = folderColor || 'currentColor';
+    header.innerHTML = `<svg class="folder-chevron ${folder.collapsed ? 'collapsed' : ''}" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg><svg class="folder-icon" width="14" height="14" viewBox="0 0 24 24" fill="${iconFill}" stroke="${iconStroke}" stroke-width="2" style="${folderColor ? 'opacity:0.9' : ''}"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg><span class="folder-name">${escapeHtml(folder.name)}</span><div class="folder-actions"><button data-action="add-file" title="New file here"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button><button class="btn-delete-folder" data-action="delete-folder" title="Delete folder"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>`;
+    // Right-click for color picker
+    header.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      ctxFolderId = folder.id;
+      ctxMenu.style.display = '';
+      ctxMenu.style.left = Math.min(e.clientX, window.innerWidth - 160) + 'px';
+      ctxMenu.style.top = Math.min(e.clientY, window.innerHeight - 100) + 'px';
+      ctxMenu.querySelectorAll('.ctx-color').forEach(s => s.classList.toggle('active', s.dataset.color === (folder.color || '')));
+    });
     header.addEventListener('click', async (e) => {
       const action = e.target.closest('[data-action]')?.dataset.action;
       if (action === 'delete-folder') { e.stopPropagation(); if (confirm('Delete folder "' + folder.name + '"?')) { await api.deleteFolder(folder.id); await loadAll(); } return; }

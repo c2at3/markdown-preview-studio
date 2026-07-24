@@ -88,6 +88,7 @@ async function initDb() {
   try { db.run('ALTER TABLE files ADD COLUMN private_edit_token TEXT'); } catch (e) {}
   try { db.run('ALTER TABLE files ADD COLUMN private_view_pw TEXT'); } catch (e) {}
   try { db.run('ALTER TABLE files ADD COLUMN private_edit_pw TEXT'); } catch (e) {}
+  try { db.run('ALTER TABLE folders ADD COLUMN color TEXT'); } catch (e) {}
 
   db.run('CREATE INDEX IF NOT EXISTS idx_files_share_id ON files(share_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_id)');
@@ -123,12 +124,13 @@ app.post('/api/folders', (req, res) => {
 });
 
 app.put('/api/folders/:id', (req, res) => {
-  const { name, parent_id, collapsed, sort_order } = req.body;
+  const { name, parent_id, collapsed, sort_order, color } = req.body;
   const sets = [], vals = [];
   if (name !== undefined) { sets.push('name = ?'); vals.push(name); }
   if (parent_id !== undefined) { sets.push('parent_id = ?'); vals.push(parent_id || null); }
   if (collapsed !== undefined) { sets.push('collapsed = ?'); vals.push(collapsed ? 1 : 0); }
   if (sort_order !== undefined) { sets.push('sort_order = ?'); vals.push(sort_order); }
+  if (color !== undefined) { sets.push('color = ?'); vals.push(color || null); }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
   vals.push(req.params.id);
   run(`UPDATE folders SET ${sets.join(', ')} WHERE id = ?`, vals);
