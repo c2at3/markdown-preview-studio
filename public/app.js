@@ -630,12 +630,15 @@ graph TD
   ctxColors.innerHTML = colorsHTML;
 
   ctxColors.addEventListener('click', async (e) => {
+    e.stopPropagation();
     const swatch = e.target.closest('.ctx-color');
     if (!swatch || !ctxFolderId) return;
     const color = swatch.dataset.color;
     await api.updateFolder(ctxFolderId, { color: color || null });
+    const f = folders.find(x => x.id === ctxFolderId);
+    if (f) f.color = color || null;
     ctxMenu.style.display = 'none';
-    await loadAll();
+    renderSidebar();
   });
 
   function startFolderRename(folder, header) {
