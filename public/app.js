@@ -638,27 +638,36 @@ graph TD
     await loadAll();
   });
 
-  $('#ctx-rename').addEventListener('click', () => {
-    ctxMenu.style.display = 'none';
-    if (!ctxFolderId) return;
-    const header = fileList.querySelector(`[data-folder-id="${ctxFolderId}"] .folder-header`);
+  function startFolderRename(folder, header) {
+    if (!header) header = fileList.querySelector(`[data-folder-id="${folder.id}"] .folder-header`);
     if (!header) return;
     const nameSpan = header.querySelector('.folder-name');
-    const folder = folders.find(f => f.id === ctxFolderId);
-    if (!nameSpan || !folder) return;
+    if (!nameSpan) return;
     const input = document.createElement('input');
     input.className = 'folder-name-input';
     input.value = folder.name;
     nameSpan.replaceWith(input);
-    input.focus();
-    input.select();
+    input.addEventListener('mousedown', (e) => e.stopPropagation());
+    input.addEventListener('click', (e) => e.stopPropagation());
+    let done = false;
     const finish = async () => {
+      if (done) return;
+      done = true;
       await api.updateFolder(folder.id, { name: input.value.trim() || folder.name });
       folder.name = input.value.trim() || folder.name;
       renderSidebar();
     };
     input.addEventListener('blur', finish);
     input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur(); if (ev.key === 'Escape') { input.value = folder.name; input.blur(); } });
+    setTimeout(() => { input.focus(); input.select(); }, 0);
+  }
+
+  $('#ctx-rename').addEventListener('click', () => {
+    ctxMenu.style.display = 'none';
+    if (!ctxFolderId) return;
+    const folder = folders.find(f => f.id === ctxFolderId);
+    if (!folder) return;
+    startFolderRename(folder);
   });
 
   document.addEventListener('click', (e) => { if (!e.target.closest('.context-menu')) ctxMenu.style.display = 'none'; });
@@ -722,10 +731,15 @@ graph TD
       ctxMenu.querySelectorAll('.ctx-color').forEach(s => s.classList.toggle('active', s.dataset.color === (folder.color || '')));
     });
     header.addEventListener('click', async (e) => {
+      if (header.querySelector('.folder-name-input')) return;
       const action = e.target.closest('[data-action]')?.dataset.action;
       if (action === 'delete-folder') { e.stopPropagation(); if (confirm('Delete folder "' + folder.name + '"?')) { await api.deleteFolder(folder.id); await loadAll(); } return; }
       if (action === 'add-file') { e.stopPropagation(); const file = await api.createFile('Untitled', '', folder.id); await loadAll(); await switchFile(file.id); fileNameInput.focus(); fileNameInput.select(); return; }
       folder.collapsed = !folder.collapsed; await api.updateFolder(folder.id, { collapsed: !folder.collapsed }); renderSidebar();
+    });
+    header.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      startFolderRename(folder, header);
     });
     header.addEventListener('dragstart', (e) => { dragItem = folder.id; dragType = 'folder'; header.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
     header.addEventListener('dragend', () => { header.classList.remove('dragging'); dragItem = null; dragType = null; });
@@ -784,9 +798,7 @@ graph TD
   async function createNewFolder() {
     const folder = await api.createFolder('New Folder');
     await loadAll();
-    // Trigger rename via context menu logic
-    ctxFolderId = folder.id;
-    $('#ctx-rename').click();
+    startFolderRename(folders.find(f => f.id === folder.id) || folder);
   }
 
   // ===== Auto-save =====
