@@ -1206,6 +1206,27 @@ body.dark .cm-attribute { color: #ffcb6b; }
   box-shadow: var(--shadow-lg);
   min-width: 140px;
 }
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  color: var(--text);
+  transition: background 0.1s;
+}
+.context-menu-item:hover { background: var(--bg-hover); }
+.context-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
 .context-menu-label {
   font-size: 10px;
   font-weight: 600;

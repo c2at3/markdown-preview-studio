@@ -638,7 +638,30 @@ graph TD
     await loadAll();
   });
 
-  document.addEventListener('click', () => { ctxMenu.style.display = 'none'; });
+  $('#ctx-rename').addEventListener('click', () => {
+    ctxMenu.style.display = 'none';
+    if (!ctxFolderId) return;
+    const header = fileList.querySelector(`[data-folder-id="${ctxFolderId}"] .folder-header`);
+    if (!header) return;
+    const nameSpan = header.querySelector('.folder-name');
+    const folder = folders.find(f => f.id === ctxFolderId);
+    if (!nameSpan || !folder) return;
+    const input = document.createElement('input');
+    input.className = 'folder-name-input';
+    input.value = folder.name;
+    nameSpan.replaceWith(input);
+    input.focus();
+    input.select();
+    const finish = async () => {
+      await api.updateFolder(folder.id, { name: input.value.trim() || folder.name });
+      folder.name = input.value.trim() || folder.name;
+      renderSidebar();
+    };
+    input.addEventListener('blur', finish);
+    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur(); if (ev.key === 'Escape') { input.value = folder.name; input.blur(); } });
+  });
+
+  document.addEventListener('click', (e) => { if (!e.target.closest('.context-menu')) ctxMenu.style.display = 'none'; });
   document.addEventListener('contextmenu', (e) => {
     if (!e.target.closest('.folder-header')) { ctxMenu.style.display = 'none'; return; }
   });
@@ -704,12 +727,6 @@ graph TD
       if (action === 'add-file') { e.stopPropagation(); const file = await api.createFile('Untitled', '', folder.id); await loadAll(); await switchFile(file.id); fileNameInput.focus(); fileNameInput.select(); return; }
       folder.collapsed = !folder.collapsed; await api.updateFolder(folder.id, { collapsed: !folder.collapsed }); renderSidebar();
     });
-    header.addEventListener('dblclick', (e) => {
-      e.stopPropagation(); const nameSpan = header.querySelector('.folder-name');
-      const input = document.createElement('input'); input.className = 'folder-name-input'; input.value = folder.name; nameSpan.replaceWith(input); input.focus(); input.select();
-      const finish = async () => { await api.updateFolder(folder.id, { name: input.value.trim() || folder.name }); folder.name = input.value.trim() || folder.name; renderSidebar(); };
-      input.addEventListener('blur', finish); input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur(); if (ev.key === 'Escape') { input.value = folder.name; input.blur(); } });
-    });
     header.addEventListener('dragstart', (e) => { dragItem = folder.id; dragType = 'folder'; header.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
     header.addEventListener('dragend', () => { header.classList.remove('dragging'); dragItem = null; dragType = null; });
     header.addEventListener('dragover', (e) => { if (!dragItem || (dragType === 'folder' && dragItem === folder.id)) return; e.preventDefault(); header.classList.add('drag-over'); });
@@ -764,7 +781,13 @@ graph TD
   }
 
   async function togglePin(id, pinned) { await api.updateFile(id, { is_pinned: pinned }); await loadAll(); }
-  async function createNewFolder() { const folder = await api.createFolder('New Folder'); await loadAll(); const el = fileList.querySelector(`[data-folder-id="${folder.id}"] .folder-header`); if (el) el.dispatchEvent(new MouseEvent('dblclick')); }
+  async function createNewFolder() {
+    const folder = await api.createFolder('New Folder');
+    await loadAll();
+    // Trigger rename via context menu logic
+    ctxFolderId = folder.id;
+    $('#ctx-rename').click();
+  }
 
   // ===== Auto-save =====
   function scheduleSave() {
