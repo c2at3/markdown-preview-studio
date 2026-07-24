@@ -499,16 +499,17 @@ body.dark .find-panel {
 .find-tab.active { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
 .find-panel-close {
   margin-left: auto;
-  background: none;
+  background: var(--danger);
   border: none;
-  padding: 3px;
+  padding: 4px;
   cursor: pointer;
-  color: var(--text-3);
+  color: #fff;
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
+  transition: background 0.1s;
 }
-.find-panel-close:hover { background: var(--bg-hover); color: var(--text); }
+.find-panel-close:hover { background: var(--danger); opacity: 0.8; }
 
 .find-row {
   display: flex;
