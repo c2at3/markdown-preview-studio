@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - Markdown Preview Studio</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root { --accent: #3b82f6; --accent-hover: #2563eb; --bg: #f8f9fb; --surface: #fff; --text: #1a1d21; --text-2: #5f6672; --text-3: #9ca3af; --border: #e5e7eb; --danger: #ef4444; --radius: 10px; }
+    body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+    .login-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 40px; max-width: 400px; width: 100%; box-shadow: 0 4px 24px rgba(0,0,0,0.06); }
+    .login-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .login-logo svg { color: var(--accent); }
+    .login-logo h1 { font-size: 20px; font-weight: 700; }
+    .login-subtitle { color: var(--text-2); font-size: 14px; margin-bottom: 28px; }
+    label { display: block; font-size: 12px; font-weight: 500; color: var(--text-2); margin-bottom: 4px; }
+    input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; font-family: inherit; color: var(--text); background: var(--bg); outline: none; transition: border-color 0.15s; margin-bottom: 14px; }
+    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+    .btn { display: flex; align-items: center; justify-content: center; width: 100%; padding: 11px; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; font-family: inherit; background: var(--accent); color: #fff; transition: background 0.15s; margin-top: 6px; }
+    .btn:hover { background: var(--accent-hover); }
+    .error { color: var(--danger); font-size: 13px; margin-bottom: 10px; display: none; text-align: center; }
+    .error.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-logo">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      <h1>Markdown Preview Studio</h1>
+    </div>
+    <p class="login-subtitle">Sign in to continue</p>
+    <div class="error" id="error"></div>
+    <form id="login-form">
+      <label for="username">Username</label>
+      <input type="text" id="username" placeholder="Username" autocomplete="username" autofocus>
+      <label for="password">Password</label>
+      <input type="password" id="password" placeholder="Password" autocomplete="current-password">
+      <button class="btn" type="submit">Sign in</button>
+    </form>
+  </div>
+  <script>
+    const error = document.getElementById('error');
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      error.classList.remove('show');
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      if (!username || !password) { error.textContent = 'Enter username and password'; error.classList.add('show'); return; }
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+        if (data.token) {
+          document.cookie = 'session=' + data.token + ';path=/;max-age=' + (7 * 86400) + ';SameSite=Strict';
+          location.href = '/';
+        } else {
+          error.textContent = data.error || 'Login failed';
+          error.classList.add('show');
+        }
+      } catch (err) { error.textContent = 'Connection error'; error.classList.add('show'); }
+    });
+    fetch('/api/auth/status').then(r => r.json()).then(data => {
+      if (!data.setup_done) location.href = '/setup';
+    });
+  </script>
+</body>
+</html>

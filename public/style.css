@@ -305,7 +305,21 @@ body {
   border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
+  gap: 6px;
 }
+.sidebar-spacer { flex: 1; }
+.sidebar-logout {
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--text-3);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  transition: all 0.1s;
+}
+.sidebar-logout:hover { color: var(--danger); background: var(--danger-soft); }
 
 .sidebar-toggle {
   display: flex;

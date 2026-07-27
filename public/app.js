@@ -1179,6 +1179,14 @@ graph TD
 
   // ===== Init =====
   async function init() {
+    // Auth check
+    try {
+      const authRes = await fetch('/api/auth/status');
+      const authData = await authRes.json();
+      if (!authData.setup_done) { location.href = '/setup.html'; return; }
+      if (!authData.logged_in && !location.pathname.match(/^\/(s|p|e)\//)) { location.href = '/login.html'; return; }
+    } catch (e) {}
+
     if (await checkSharedView()) return;
 
     await loadAll();
@@ -1208,6 +1216,11 @@ graph TD
     $('#btn-new-folder').addEventListener('click', createNewFolder);
     $('#btn-toggle-sidebar').addEventListener('click', () => { sidebar.classList.add('collapsed'); $('#btn-open-sidebar').style.display = 'flex'; });
     $('#btn-open-sidebar').addEventListener('click', () => { sidebar.classList.remove('collapsed'); $('#btn-open-sidebar').style.display = 'none'; });
+    $('#btn-logout').addEventListener('click', async () => {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      document.cookie = 'session=;path=/;max-age=0';
+      location.href = '/login.html';
+    });
 
     $('#btn-bold').addEventListener('click', () => insertAround('**', '**'));
     $('#btn-italic').addEventListener('click', () => insertAround('*', '*'));

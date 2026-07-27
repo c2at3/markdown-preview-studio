@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Setup - Markdown Preview Studio</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📝</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root { --accent: #3b82f6; --accent-hover: #2563eb; --bg: #f8f9fb; --surface: #fff; --text: #1a1d21; --text-2: #5f6672; --text-3: #9ca3af; --border: #e5e7eb; --danger: #ef4444; --radius: 10px; }
+    body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+    .setup-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 40px; max-width: 480px; width: 100%; box-shadow: 0 4px 24px rgba(0,0,0,0.06); }
+    .setup-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .setup-logo svg { color: var(--accent); }
+    .setup-logo h1 { font-size: 20px; font-weight: 700; }
+    .setup-subtitle { color: var(--text-2); font-size: 14px; margin-bottom: 28px; }
+    .step { display: none; } .step.active { display: block; }
+    .step-indicator { display: flex; gap: 8px; margin-bottom: 24px; }
+    .step-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); transition: background 0.2s; }
+    .step-dot.active { background: var(--accent); }
+    .step-dot.done { background: #22c55e; }
+    h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+    label { display: block; font-size: 12px; font-weight: 500; color: var(--text-2); margin-bottom: 4px; }
+    input[type="text"], input[type="password"], select { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; font-family: inherit; color: var(--text); background: var(--bg); outline: none; transition: border-color 0.15s; margin-bottom: 14px; }
+    input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 20px; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; font-family: inherit; transition: all 0.15s; }
+    .btn-primary { background: var(--accent); color: #fff; } .btn-primary:hover { background: var(--accent-hover); }
+    .btn-secondary { background: var(--bg); color: var(--text-2); border: 1px solid var(--border); } .btn-secondary:hover { background: var(--border); }
+    .btn-row { display: flex; justify-content: space-between; margin-top: 20px; }
+    .pg-fields { display: none; margin-top: 8px; }
+    .pg-fields.show { display: block; }
+    .error { color: var(--danger); font-size: 13px; margin-bottom: 10px; display: none; }
+    .error.show { display: block; }
+    .test-result { font-size: 12px; margin-top: -8px; margin-bottom: 10px; }
+    .test-result.ok { color: #22c55e; } .test-result.fail { color: var(--danger); }
+    .info { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #1e40af; margin-bottom: 16px; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="setup-card">
+    <div class="setup-logo">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      <h1>Markdown Preview Studio</h1>
+    </div>
+    <p class="setup-subtitle">Initial setup — configure your instance</p>
+
+    <div class="step-indicator">
+      <div class="step-dot active" id="dot-1"></div>
+      <div class="step-dot" id="dot-2"></div>
+    </div>
+
+    <div class="error" id="error"></div>
+
+    <!-- Step 1: Database -->
+    <div class="step active" id="step-1">
+      <h2>1. Database Configuration</h2>
+      <div class="info">SQLite works out of the box with no setup. Choose PostgreSQL if you need to scale or share data across instances.</div>
+      <label for="db-type">Database type</label>
+      <select id="db-type">
+        <option value="sqlite">SQLite (built-in, recommended)</option>
+        <option value="pg">PostgreSQL (external)</option>
+      </select>
+      <div class="pg-fields" id="pg-fields">
+        <label for="pg-conn">PostgreSQL connection string</label>
+        <input type="text" id="pg-conn" placeholder="postgresql://user:password@host:5432/dbname">
+        <button class="btn btn-secondary" id="btn-test-pg" type="button">Test connection</button>
+        <div class="test-result" id="pg-test-result"></div>
+      </div>
+      <div class="btn-row">
+        <span></span>
+        <button class="btn btn-primary" id="btn-next">Next</button>
+      </div>
+    </div>
+
+    <!-- Step 2: Admin Account -->
+    <div class="step" id="step-2">
+      <h2>2. Create Admin Account</h2>
+      <label for="username">Username</label>
+      <input type="text" id="username" placeholder="admin" autocomplete="username">
+      <label for="password">Password</label>
+      <input type="password" id="password" placeholder="Min 6 characters" autocomplete="new-password">
+      <label for="password2">Confirm password</label>
+      <input type="password" id="password2" placeholder="Repeat password" autocomplete="new-password">
+      <div class="btn-row">
+        <button class="btn btn-secondary" id="btn-back">Back</button>
+        <button class="btn btn-primary" id="btn-finish">Complete Setup</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const dbType = document.getElementById('db-type');
+    const pgFields = document.getElementById('pg-fields');
+    const error = document.getElementById('error');
+    let currentStep = 1;
+    let dbConfig = {};
+
+    dbType.addEventListener('change', () => {
+      pgFields.classList.toggle('show', dbType.value === 'pg');
+    });
+
+    document.getElementById('btn-test-pg').addEventListener('click', async () => {
+      const result = document.getElementById('pg-test-result');
+      result.textContent = 'Testing...';
+      result.className = 'test-result';
+      try {
+        const res = await fetch('/api/auth/test-db', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ db_type: 'pg', pg_connection: document.getElementById('pg-conn').value })
+        });
+        const data = await res.json();
+        if (data.ok) { result.textContent = 'Connected successfully'; result.className = 'test-result ok'; }
+        else { result.textContent = 'Failed: ' + data.error; result.className = 'test-result fail'; }
+      } catch (e) { result.textContent = 'Error: ' + e.message; result.className = 'test-result fail'; }
+    });
+
+    function showStep(n) {
+      currentStep = n;
+      document.querySelectorAll('.step').forEach((s, i) => s.classList.toggle('active', i === n - 1));
+      document.querySelectorAll('.step-dot').forEach((d, i) => {
+        d.classList.toggle('active', i === n - 1);
+        d.classList.toggle('done', i < n - 1);
+      });
+      error.classList.remove('show');
+    }
+
+    function showError(msg) { error.textContent = msg; error.classList.add('show'); }
+
+    document.getElementById('btn-next').addEventListener('click', () => {
+      if (dbType.value === 'pg' && !document.getElementById('pg-conn').value.trim()) {
+        showError('Enter PostgreSQL connection string');
+        return;
+      }
+      dbConfig = { db_type: dbType.value };
+      if (dbType.value === 'pg') dbConfig.pg_connection = document.getElementById('pg-conn').value.trim();
+      showStep(2);
+    });
+
+    document.getElementById('btn-back').addEventListener('click', () => showStep(1));
+
+    document.getElementById('btn-finish').addEventListener('click', async () => {
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      const password2 = document.getElementById('password2').value;
+
+      if (!username) { showError('Enter username'); return; }
+      if (username.length < 3) { showError('Username must be at least 3 characters'); return; }
+      if (password.length < 6) { showError('Password must be at least 6 characters'); return; }
+      if (password !== password2) { showError('Passwords do not match'); return; }
+
+      try {
+        const res = await fetch('/api/auth/setup', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...dbConfig, username, password })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          document.cookie = 'session=' + data.token + ';path=/;max-age=' + (7 * 86400) + ';SameSite=Strict';
+          location.href = '/';
+        } else {
+          showError(data.error || 'Setup failed');
+        }
+      } catch (e) { showError('Error: ' + e.message); }
+    });
+
+    // Check if already setup
+    fetch('/api/auth/status').then(r => r.json()).then(data => {
+      if (data.setup_done) location.href = '/';
+    });
+  </script>
+</body>
+</html>
