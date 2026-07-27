@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { nanoid } = require('nanoid');
 const db = require('./lib/db');
 const auth = require('./lib/auth');
+const { authRateLimiter } = require('./lib/ratelimit');
 
 const app = express();
 const PORT = process.env.PORT || 3456;
@@ -14,7 +15,9 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 function hashSharePw(pw) { return crypto.createHash('sha256').update(pw).digest('hex'); }
 
-// Cookie parser (simple)
+function log(msg) { console.log(`[${new Date().toISOString()}] ${msg}`); }
+
+// Cookie parser
 app.use((req, res, next) => {
   req.cookies = {};
   (req.headers.cookie || '').split(';').forEach(c => {
@@ -25,59 +28,47 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: '10mb' }));
+app.set('trust proxy', true);
+
+// ===== HEALTH =====
+app.get('/health', async (req, res) => {
+  try {
+    await db.get('SELECT 1');
+    res.json({ status: 'ok', uptime: process.uptime() });
+  } catch (e) {
+    res.status(503).json({ status: 'error', error: e.message });
+  }
+});
 
 // ===== AUTH ROUTES (public) =====
 app.get('/api/auth/status', async (req, res) => {
-  const setupDone = db.isSetupDone();
-  let user = null;
-  if (setupDone) {
-    const token = req.cookies.session || req.headers['x-session-token'];
-    user = await auth.validateSession(token);
-  }
-  res.json({ setup_done: setupDone, logged_in: !!user, user: user ? { username: user.username, role: user.role } : null });
+  const hasUsers = await auth.hasAnyUser();
+  const token = req.cookies.session || req.headers['x-session-token'];
+  const user = await auth.validateSession(token);
+  res.json({ setup_done: hasUsers, logged_in: !!user, user: user ? { username: user.username, role: user.role } : null });
 });
 
-app.post('/api/auth/test-db', async (req, res) => {
-  if (db.isSetupDone()) return res.status(400).json({ error: 'Already setup' });
-  const { db_type, pg_connection } = req.body;
-  if (db_type === 'pg') {
-    try {
-      const { Pool } = require('pg');
-      const pool = new Pool({ connectionString: pg_connection });
-      await pool.query('SELECT 1');
-      await pool.end();
-      res.json({ ok: true });
-    } catch (e) { res.json({ ok: false, error: e.message }); }
-  } else {
-    res.json({ ok: true });
-  }
-});
-
-app.post('/api/auth/setup', async (req, res) => {
-  if (db.isSetupDone()) return res.status(400).json({ error: 'Already setup' });
-  const { db_type, pg_connection, username, password } = req.body;
+app.post('/api/auth/setup', authRateLimiter, async (req, res) => {
+  const hasUsers = await auth.hasAnyUser();
+  if (hasUsers) return res.status(400).json({ error: 'Setup already completed' });
+  const { username, password } = req.body;
   if (!username || username.length < 3) return res.status(400).json({ error: 'Username min 3 chars' });
   if (!password || password.length < 6) return res.status(400).json({ error: 'Password min 6 chars' });
-
   try {
-    const config = { db_type: db_type || 'sqlite' };
-    if (db_type === 'pg') config.pg_connection = pg_connection;
-    else config.sqlite_path = path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'markdown.db');
-
-    await db.init(config);
-    db.saveConfig(config);
     await auth.createUser(username, password, 'admin');
     const session = await auth.login(username, password);
+    log(`Setup completed. Admin user "${username}" created.`);
     res.json({ ok: true, token: session.token });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authRateLimiter, async (req, res) => {
   const { username, password } = req.body;
   const session = await auth.login(username, password);
-  if (!session) return res.status(401).json({ error: 'Invalid credentials' });
+  if (!session) { log(`Login failed for "${username}" from ${req.ip}`); return res.status(401).json({ error: 'Invalid credentials' }); }
+  log(`Login: "${username}" from ${req.ip}`);
   res.json({ token: session.token, user: session.user });
 });
 
@@ -87,31 +78,30 @@ app.post('/api/auth/logout', async (req, res) => {
   res.json({ ok: true });
 });
 
-// ===== STATIC + SPA =====
+// ===== STATIC =====
 app.use('/uploads', (req, res, next) => {
-  res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; style-src 'none'; script-src 'none'");
+  res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'");
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Content-Disposition', 'inline');
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   next();
 }, express.static(UPLOAD_DIR));
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Redirect to setup/login if needed
+// Redirect to setup/login
 app.get('/', async (req, res, next) => {
-  if (!db.isSetupDone()) return res.redirect('/setup.html');
-  const token = req.cookies.session;
-  const user = await auth.validateSession(token);
+  const hasUsers = await auth.hasAnyUser();
+  if (!hasUsers) return res.redirect('/setup.html');
+  const user = await auth.validateSession(req.cookies.session);
   if (!user) return res.redirect('/login.html');
   next();
 });
 
-// ===== AUTH MIDDLEWARE for API =====
+// ===== AUTH MIDDLEWARE =====
 app.use('/api', async (req, res, next) => {
-  const publicPaths = ['/api/auth/', '/api/shared/', '/api/private/', '/api/private-edit/'];
-  if (publicPaths.some(p => req.path.startsWith(p.replace('/api', '')))) return next();
-  if (!db.isSetupDone()) return res.status(503).json({ error: 'Setup required' });
+  const publicPrefixes = ['/auth/', '/shared/', '/private/', '/private-edit/'];
+  const apiPath = req.path;
+  if (publicPrefixes.some(p => apiPath.startsWith(p))) return next();
   const token = req.cookies.session || req.headers['x-session-token'];
   const user = await auth.validateSession(token);
   if (!user) return res.status(401).json({ error: 'Not authenticated' });
@@ -132,7 +122,7 @@ app.post('/api/folders', async (req, res) => {
     ? await db.get('SELECT MAX(sort_order) as m FROM folders WHERE parent_id = ?', [pid])
     : await db.get('SELECT MAX(sort_order) as m FROM folders WHERE parent_id IS NULL');
   await db.run('INSERT INTO folders (id, name, parent_id, sort_order) VALUES (?, ?, ?, ?)',
-    [id, name || 'New Folder', parent_id || null, (maxOrder?.m || 0) + 1]);
+    [id, name || 'New Folder', pid, (maxOrder?.m || 0) + 1]);
   res.status(201).json(await db.get('SELECT * FROM folders WHERE id = ?', [id]));
 });
 
@@ -141,7 +131,7 @@ app.put('/api/folders/:id', async (req, res) => {
   const sets = [], vals = [];
   if (name !== undefined) { sets.push('name = ?'); vals.push(name); }
   if (parent_id !== undefined) { sets.push('parent_id = ?'); vals.push(parent_id || null); }
-  if (collapsed !== undefined) { sets.push('collapsed = ?'); vals.push(collapsed ? 1 : 0); }
+  if (collapsed !== undefined) { sets.push('collapsed = ?'); vals.push(!!collapsed); }
   if (sort_order !== undefined) { sets.push('sort_order = ?'); vals.push(sort_order); }
   if (color !== undefined) { sets.push('color = ?'); vals.push(color || null); }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
@@ -174,7 +164,7 @@ app.post('/api/files', async (req, res) => {
     ? await db.get('SELECT MAX(sort_order) as m FROM files WHERE folder_id = ?', [fid])
     : await db.get('SELECT MAX(sort_order) as m FROM files WHERE folder_id IS NULL');
   await db.run('INSERT INTO files (id, name, content, folder_id, sort_order) VALUES (?, ?, ?, ?, ?)',
-    [id, name || 'Untitled', content || '', folder_id || null, (maxOrder?.m || 0) + 1]);
+    [id, name || 'Untitled', content || '', fid, (maxOrder?.m || 0) + 1]);
   res.status(201).json(await db.get('SELECT * FROM files WHERE id = ?', [id]));
 });
 
@@ -189,11 +179,11 @@ app.put('/api/files/:id', async (req, res) => {
   const sets = [], vals = [];
   if (name !== undefined) { sets.push('name = ?'); vals.push(name); }
   if (content !== undefined) { sets.push('content = ?'); vals.push(content); }
-  if (is_pinned !== undefined) { sets.push('is_pinned = ?'); vals.push(is_pinned ? 1 : 0); }
+  if (is_pinned !== undefined) { sets.push('is_pinned = ?'); vals.push(!!is_pinned); }
   if (folder_id !== undefined) { sets.push('folder_id = ?'); vals.push(folder_id || null); }
   if (sort_order !== undefined) { sets.push('sort_order = ?'); vals.push(sort_order); }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
-  sets.push(`updated_at = ${db.now()}`);
+  sets.push('updated_at = NOW()');
   vals.push(req.params.id);
   const result = await db.run(`UPDATE files SET ${sets.join(', ')} WHERE id = ?`, vals);
   if (!result.changes) return res.status(404).json({ error: 'Not found' });
@@ -213,7 +203,7 @@ app.delete('/api/files/:id/share', async (req, res) => {
 });
 
 app.post('/api/files/:id/share', async (req, res) => {
-  const file = await db.get('SELECT * FROM files WHERE id = ?', [req.params.id]);
+  const file = await db.get('SELECT share_id FROM files WHERE id = ?', [req.params.id]);
   if (!file) return res.status(404).json({ error: 'Not found' });
   let shareId = file.share_id;
   if (!shareId) { shareId = nanoid(8); await db.run('UPDATE files SET share_id = ? WHERE id = ?', [shareId, req.params.id]); }
@@ -221,7 +211,7 @@ app.post('/api/files/:id/share', async (req, res) => {
 });
 
 app.post('/api/files/:id/share-private', async (req, res) => {
-  const file = await db.get('SELECT * FROM files WHERE id = ?', [req.params.id]);
+  const file = await db.get('SELECT private_view_token, private_edit_token FROM files WHERE id = ?', [req.params.id]);
   if (!file) return res.status(404).json({ error: 'Not found' });
   const { view_password, edit_password } = req.body;
   const sets = [], vals = [];
@@ -263,24 +253,17 @@ app.post('/api/shared/:shareId/fork', async (req, res) => {
   res.status(201).json(await db.get('SELECT * FROM files WHERE id = ?', [id]));
 });
 
-// Private share (no auth, password-based)
-app.post('/api/private/:token/auth', async (req, res) => {
-  const file = await db.get('SELECT id, name, content, private_view_pw, created_at, updated_at FROM files WHERE private_view_token = ?', [req.params.token]);
-  if (!file) return res.status(404).json({ error: 'Not found' });
-  if (file.private_view_pw && hashSharePw(req.body.password || '') !== file.private_view_pw) return res.status(403).json({ error: 'Wrong password' });
-  res.json({ id: file.id, name: file.name, content: file.content, created_at: file.created_at, updated_at: file.updated_at });
-});
-
+// Private share (password-based, no auth)
 app.get('/api/private/:token/check', async (req, res) => {
   const file = await db.get('SELECT id, name, private_view_pw FROM files WHERE private_view_token = ?', [req.params.token]);
   if (!file) return res.status(404).json({ error: 'Not found' });
   res.json({ needs_password: !!file.private_view_pw, name: file.name });
 });
 
-app.post('/api/private-edit/:token/auth', async (req, res) => {
-  const file = await db.get('SELECT id, name, content, private_edit_pw, created_at, updated_at FROM files WHERE private_edit_token = ?', [req.params.token]);
+app.post('/api/private/:token/auth', authRateLimiter, async (req, res) => {
+  const file = await db.get('SELECT id, name, content, private_view_pw, created_at, updated_at FROM files WHERE private_view_token = ?', [req.params.token]);
   if (!file) return res.status(404).json({ error: 'Not found' });
-  if (file.private_edit_pw && hashSharePw(req.body.password || '') !== file.private_edit_pw) return res.status(403).json({ error: 'Wrong password' });
+  if (file.private_view_pw && hashSharePw(req.body.password || '') !== file.private_view_pw) return res.status(403).json({ error: 'Wrong password' });
   res.json({ id: file.id, name: file.name, content: file.content, created_at: file.created_at, updated_at: file.updated_at });
 });
 
@@ -288,6 +271,13 @@ app.get('/api/private-edit/:token/check', async (req, res) => {
   const file = await db.get('SELECT id, name, private_edit_pw FROM files WHERE private_edit_token = ?', [req.params.token]);
   if (!file) return res.status(404).json({ error: 'Not found' });
   res.json({ needs_password: !!file.private_edit_pw, name: file.name });
+});
+
+app.post('/api/private-edit/:token/auth', authRateLimiter, async (req, res) => {
+  const file = await db.get('SELECT id, name, content, private_edit_pw, created_at, updated_at FROM files WHERE private_edit_token = ?', [req.params.token]);
+  if (!file) return res.status(404).json({ error: 'Not found' });
+  if (file.private_edit_pw && hashSharePw(req.body.password || '') !== file.private_edit_pw) return res.status(403).json({ error: 'Wrong password' });
+  res.json({ id: file.id, name: file.name, content: file.content, created_at: file.created_at, updated_at: file.updated_at });
 });
 
 app.put('/api/private-edit/:token', async (req, res) => {
@@ -299,7 +289,7 @@ app.put('/api/private-edit/:token', async (req, res) => {
   if (name !== undefined) { sets.push('name = ?'); vals.push(name); }
   if (content !== undefined) { sets.push('content = ?'); vals.push(content); }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
-  sets.push(`updated_at = ${db.now()}`);
+  sets.push('updated_at = NOW()');
   vals.push(file.id);
   await db.run(`UPDATE files SET ${sets.join(', ')} WHERE id = ?`, vals);
   res.json(await db.get('SELECT id, name, content, created_at, updated_at FROM files WHERE id = ?', [file.id]));
@@ -338,7 +328,7 @@ app.post('/api/upload', (req, res) => {
   res.json({ url: '/uploads/' + name, name });
 });
 
-// ===== SPA FALLBACK =====
+// ===== SPA =====
 const serveIndex = (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html'));
 app.get('/s/:shareId', serveIndex);
 app.get('/p/:token', serveIndex);
@@ -346,17 +336,19 @@ app.get('/e/:token', serveIndex);
 
 // ===== START =====
 async function start() {
-  if (db.isSetupDone()) {
-    const config = db.loadConfig();
-    await db.init(config);
-    console.log('Database loaded (' + (config.db_type || 'sqlite') + ')');
-  } else {
-    console.log('No config found — setup required at /setup.html');
+  try {
+    await db.init();
+    log('PostgreSQL connected');
+    await auth.ensureAdmin();
+    setInterval(() => auth.cleanExpiredSessions(), 60 * 60 * 1000);
+    app.listen(PORT, () => log(`Markdown Preview Studio running at http://localhost:${PORT}`));
+  } catch (e) {
+    console.error('Failed to start:', e.message);
+    process.exit(1);
   }
-  app.listen(PORT, () => console.log(`Markdown Preview Studio running at http://localhost:${PORT}`));
 }
 
 start();
 
-process.on('SIGINT', () => { db.close(); process.exit(); });
-process.on('SIGTERM', () => { db.close(); process.exit(); });
+process.on('SIGINT', async () => { await db.close(); process.exit(); });
+process.on('SIGTERM', async () => { await db.close(); process.exit(); });
