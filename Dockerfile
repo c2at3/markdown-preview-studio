@@ -6,12 +6,13 @@ COPY package.json ./
 RUN npm install --production
 
 COPY server.js ./
+COPY lib ./lib
 COPY public ./public
 
 RUN mkdir -p /app/data
 
 ENV PORT=3456
-ENV DB_PATH=/app/data/markdown.db
+ENV DATA_DIR=/app/data
 
 EXPOSE 3456
 

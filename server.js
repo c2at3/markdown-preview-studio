@@ -127,7 +127,10 @@ app.get('/api/folders', async (req, res) => {
 app.post('/api/folders', async (req, res) => {
   const id = nanoid(10);
   const { name, parent_id } = req.body;
-  const maxOrder = await db.get('SELECT MAX(sort_order) as m FROM folders WHERE parent_id IS ?', [parent_id || null]);
+  const pid = parent_id || null;
+  const maxOrder = pid
+    ? await db.get('SELECT MAX(sort_order) as m FROM folders WHERE parent_id = ?', [pid])
+    : await db.get('SELECT MAX(sort_order) as m FROM folders WHERE parent_id IS NULL');
   await db.run('INSERT INTO folders (id, name, parent_id, sort_order) VALUES (?, ?, ?, ?)',
     [id, name || 'New Folder', parent_id || null, (maxOrder?.m || 0) + 1]);
   res.status(201).json(await db.get('SELECT * FROM folders WHERE id = ?', [id]));
@@ -166,7 +169,10 @@ app.get('/api/files', async (req, res) => {
 app.post('/api/files', async (req, res) => {
   const id = nanoid(12);
   const { name, content, folder_id } = req.body;
-  const maxOrder = await db.get('SELECT MAX(sort_order) as m FROM files WHERE folder_id IS ?', [folder_id || null]);
+  const fid = folder_id || null;
+  const maxOrder = fid
+    ? await db.get('SELECT MAX(sort_order) as m FROM files WHERE folder_id = ?', [fid])
+    : await db.get('SELECT MAX(sort_order) as m FROM files WHERE folder_id IS NULL');
   await db.run('INSERT INTO files (id, name, content, folder_id, sort_order) VALUES (?, ?, ?, ?, ?)',
     [id, name || 'Untitled', content || '', folder_id || null, (maxOrder?.m || 0) + 1]);
   res.status(201).json(await db.get('SELECT * FROM files WHERE id = ?', [id]));

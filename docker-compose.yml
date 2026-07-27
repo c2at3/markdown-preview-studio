@@ -8,9 +8,32 @@ services:
       - md-data:/app/data
     environment:
       - PORT=3456
-      - DB_PATH=/app/data/markdown.db
+      - DATA_DIR=/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: markdown-preview-pg
+    environment:
+      POSTGRES_DB: markdown
+      POSTGRES_USER: mduser
+      POSTGRES_PASSWORD: mdpass123
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mduser -d markdown"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
 
 volumes:
   md-data:
+    driver: local
+  pg-data:
     driver: local
