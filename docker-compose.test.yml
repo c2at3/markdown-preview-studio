@@ -1,0 +1,36 @@
+services:
+  app:
+    build: .
+    container_name: markdown-preview
+    ports:
+      - "3456:3456"
+    volumes:
+      - uploads:/app/data/uploads
+    environment:
+      PORT: 3456
+      DATABASE_URL: postgresql://mduser:mdpass123@postgres:5432/markdown
+      UPLOAD_DIR: /app/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: markdown-preview-pg
+    environment:
+      POSTGRES_DB: markdown
+      POSTGRES_USER: mduser
+      POSTGRES_PASSWORD: mdpass123
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mduser -d markdown"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  uploads:
+  pgdata:

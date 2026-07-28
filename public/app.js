@@ -809,7 +809,10 @@ graph TD
     clearTimeout(saveTimer); showSaveStatus('Saving...');
     saveTimer = setTimeout(async () => { if (!activeFileId) return; await api.updateFile(activeFileId, { content: cm.getValue() }); showSaveStatus('Saved'); }, 500);
   }
-  function showSaveStatus(text) { saveStatus.textContent = text; if (text === 'Saved') setTimeout(() => { if (saveStatus.textContent === 'Saved') saveStatus.textContent = ''; }, 2000); }
+  function showSaveStatus(text) {
+    const el = $('#stat-save');
+    if (el) { el.textContent = text; if (text === 'Saved') setTimeout(() => { if (el.textContent === 'Saved') el.textContent = ''; }, 2000); }
+  }
 
   // ===== Image upload =====
   function setupImageUpload() {
