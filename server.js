@@ -86,9 +86,7 @@ app.use('/uploads', (req, res, next) => {
   next();
 }, express.static(UPLOAD_DIR));
 
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Redirect to setup/login
+// Auth redirects (before static so they intercept HTML pages)
 app.get('/', async (req, res, next) => {
   const hasUsers = await auth.hasAnyUser();
   if (!hasUsers) return res.redirect('/setup.html');
@@ -110,6 +108,8 @@ app.get('/setup.html', async (req, res, next) => {
   if (hasUsers) return res.redirect('/');
   next();
 });
+
+app.use(express.static(path.join(__dirname, 'public')));
 
 // ===== AUTH MIDDLEWARE =====
 app.use('/api', async (req, res, next) => {
