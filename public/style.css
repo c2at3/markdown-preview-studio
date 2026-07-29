@@ -308,6 +308,15 @@ body {
   gap: 6px;
 }
 .sidebar-spacer { flex: 1; }
+.sidebar-link {
+  color: var(--text-3);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  transition: color 0.1s;
+}
+.sidebar-link:hover { color: var(--text); }
 .sidebar-logout {
   background: none;
   border: none;
