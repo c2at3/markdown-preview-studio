@@ -39,6 +39,10 @@
       <input type="text" id="username" placeholder="Username" autocomplete="username" autofocus>
       <label for="password">Password</label>
       <input type="password" id="password" placeholder="Password" autocomplete="current-password">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:14px">
+        <input type="checkbox" id="remember" checked style="width:auto;margin:0">
+        <label for="remember" style="margin:0;font-size:13px;color:var(--text-2);cursor:pointer">Remember me (7 days)</label>
+      </div>
       <button class="btn" type="submit">Sign in</button>
     </form>
   </div>
@@ -57,7 +61,9 @@
         });
         const data = await res.json();
         if (data.token) {
-          document.cookie = 'session=' + data.token + ';path=/;max-age=' + (7 * 86400) + ';SameSite=Strict';
+          const remember = document.getElementById('remember').checked;
+          const maxAge = remember ? 7 * 86400 : '';
+          document.cookie = 'session=' + data.token + ';path=/' + (maxAge ? ';max-age=' + maxAge : '') + ';SameSite=Strict';
           location.href = '/';
         } else {
           error.textContent = data.error || 'Login failed';
