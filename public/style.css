@@ -304,10 +304,32 @@ body {
   padding: 10px 14px;
   border-top: 1px solid var(--border);
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 6px;
 }
-.sidebar-spacer { flex: 1; }
+.sidebar-footer-user {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+}
+.sidebar-username {
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sidebar-footer-info {
+  font-size: 9px;
+  color: var(--text-3);
+  letter-spacing: 0.3px;
+}
 .sidebar-link {
   color: var(--text-3);
   padding: 4px;

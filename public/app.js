@@ -1188,6 +1188,7 @@ graph TD
       const authData = await authRes.json();
       if (!authData.setup_done) { location.href = '/setup.html'; return; }
       if (!authData.logged_in && !location.pathname.match(/^\/(s|p|e)\//)) { location.href = '/login.html'; return; }
+      if (authData.user) { const el = $('#sidebar-username'); if (el) el.textContent = authData.user.username; }
     } catch (e) {}
 
     if (await checkSharedView()) return;
