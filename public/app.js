@@ -1219,10 +1219,16 @@ graph TD
     $('#btn-new-folder').addEventListener('click', createNewFolder);
     $('#btn-toggle-sidebar').addEventListener('click', () => { sidebar.classList.add('collapsed'); $('#btn-open-sidebar').style.display = 'flex'; });
     $('#btn-open-sidebar').addEventListener('click', () => { sidebar.classList.remove('collapsed'); $('#btn-open-sidebar').style.display = 'none'; });
-    $('#btn-logout').addEventListener('click', async () => {
-      await fetch('/api/auth/logout', { method: 'POST' });
-      document.cookie = 'session=;path=/;max-age=0';
-      location.href = '/login.html';
+    $('#btn-logout').addEventListener('click', () => {
+      modalTitle.textContent = 'Logout';
+      modalBody.innerHTML = '<p style="color:var(--text-2);font-size:14px;margin-bottom:16px">Are you sure you want to log out?</p><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn-new-folder" id="logout-cancel" style="margin:0;width:auto">Cancel</button><button class="btn-new-file" id="logout-confirm" style="margin:0;width:auto;background:var(--danger)">Logout</button></div>';
+      modalOverlay.classList.add('show');
+      $('#logout-cancel').addEventListener('click', () => modalOverlay.classList.remove('show'));
+      $('#logout-confirm').addEventListener('click', async () => {
+        await fetch('/api/auth/logout', { method: 'POST' });
+        document.cookie = 'session=;path=/;max-age=0';
+        location.href = '/login.html';
+      });
     });
 
     $('#btn-bold').addEventListener('click', () => insertAround('**', '**'));
