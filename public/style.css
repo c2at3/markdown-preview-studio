@@ -301,13 +301,10 @@ body {
 .file-item-actions button:hover { background: var(--bg-active); color: var(--danger); }
 
 .sidebar-footer {
-  padding: 10px 14px;
+  padding: 8px 10px;
   border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
 }
-.sidebar-footer-user {
+.sidebar-footer-row {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -320,16 +317,20 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.sidebar-footer-actions {
+.sidebar-spacer { flex: 1; }
+.sidebar-icon-btn {
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--text-3);
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
-  gap: 4px;
+  transition: color 0.1s;
+  text-decoration: none;
 }
-.sidebar-footer-info {
-  font-size: 9px;
-  color: var(--text-3);
-  letter-spacing: 0.3px;
-}
+.sidebar-icon-btn:hover { color: var(--text); }
 .sidebar-link {
   color: var(--text-3);
   padding: 4px;

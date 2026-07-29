@@ -1220,6 +1220,23 @@ graph TD
     $('#btn-new-folder').addEventListener('click', createNewFolder);
     $('#btn-toggle-sidebar').addEventListener('click', () => { sidebar.classList.add('collapsed'); $('#btn-open-sidebar').style.display = 'flex'; });
     $('#btn-open-sidebar').addEventListener('click', () => { sidebar.classList.remove('collapsed'); $('#btn-open-sidebar').style.display = 'none'; });
+    $('#btn-about').addEventListener('click', () => {
+      modalTitle.textContent = 'About';
+      modalBody.innerHTML = `
+        <div style="text-align:center;padding:8px 0">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="margin-bottom:8px"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          <h3 style="font-size:16px;font-weight:700;margin-bottom:2px">Markdown Preview Studio</h3>
+          <p style="color:var(--text-3);font-size:12px;margin-bottom:12px">Community Edition</p>
+          <p style="font-size:20px;font-weight:600;color:var(--accent);margin-bottom:16px">v1.0.0</p>
+          <div style="font-size:12px;color:var(--text-2);line-height:1.8;text-align:left;border-top:1px solid var(--border);padding-top:12px">
+            <p>Self-hosted Markdown editor with live preview, PostgreSQL storage, folder management, and sharing.</p>
+            <p style="margin-top:8px">MIT License &copy; 2026 <a href="https://github.com/c2at3" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">c2at3</a></p>
+          </div>
+        </div>
+      `;
+      modalOverlay.classList.add('show');
+    });
+
     $('#btn-logout').addEventListener('click', () => {
       modalTitle.textContent = 'Logout';
       modalBody.innerHTML = '<p style="color:var(--text-2);font-size:14px;margin-bottom:16px">Are you sure you want to log out?</p><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn-new-folder" id="logout-cancel" style="margin:0;width:auto">Cancel</button><button class="btn-new-file" id="logout-confirm" style="margin:0;width:auto;background:var(--danger)">Logout</button></div>';
