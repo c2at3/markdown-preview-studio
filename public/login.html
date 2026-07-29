@@ -72,7 +72,8 @@
       } catch (err) { error.textContent = 'Connection error'; error.classList.add('show'); }
     });
     fetch('/api/auth/status').then(r => r.json()).then(data => {
-      if (!data.setup_done) location.href = '/setup';
+      if (!data.setup_done) location.href = '/setup.html';
+      else if (data.logged_in) location.href = '/';
     });
   </script>
 </body>

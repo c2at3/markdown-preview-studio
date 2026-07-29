@@ -97,6 +97,20 @@ app.get('/', async (req, res, next) => {
   next();
 });
 
+app.get('/login.html', async (req, res, next) => {
+  const hasUsers = await auth.hasAnyUser();
+  if (!hasUsers) return res.redirect('/setup.html');
+  const user = await auth.validateSession(req.cookies.session);
+  if (user) return res.redirect('/');
+  next();
+});
+
+app.get('/setup.html', async (req, res, next) => {
+  const hasUsers = await auth.hasAnyUser();
+  if (hasUsers) return res.redirect('/');
+  next();
+});
+
 // ===== AUTH MIDDLEWARE =====
 app.use('/api', async (req, res, next) => {
   const publicPrefixes = ['/auth/', '/shared/', '/private/', '/private-edit/'];
