@@ -262,7 +262,7 @@ graph TD
   const lbZoomLevel = $('#lb-zoom-level');
 
   let lbZoom = 1, lbPanX = 0, lbPanY = 0, lbDragging = false, lbDragStart = { x: 0, y: 0 };
-  let lbIsSvg = false, lbSvgBaseW = 0, lbSvgBaseH = 0, lbSource = null;
+  let lbIsSvg = false, lbSvgBaseW = 0, lbSvgBaseH = 0, lbSource = null, lbOriginalSvg = null;
   const LB_MIN_ZOOM = 0.25, LB_MAX_ZOOM = 5, LB_ZOOM_STEP = 0.25;
 
   function lbApplyTransform(animate) {
@@ -286,13 +286,14 @@ graph TD
   function lbReset() { lbZoom = 1; lbPanX = 0; lbPanY = 0; lbApplyTransform(true); }
 
   function openLightbox(content, caption) {
-    lbTransform.innerHTML = ''; lbZoom = 1; lbPanX = 0; lbPanY = 0; lbIsSvg = false; lbSource = content;
+    lbTransform.innerHTML = ''; lbZoom = 1; lbPanX = 0; lbPanY = 0; lbIsSvg = false; lbSource = content; lbOriginalSvg = null;
     if (typeof content === 'string') {
       const img = document.createElement('img');
       img.className = 'lightbox-content'; img.src = content; img.alt = caption || ''; img.draggable = false;
       lbTransform.appendChild(img);
     } else {
       lbIsSvg = true;
+      lbOriginalSvg = content;
       const svgClone = content.cloneNode(true);
       const vb = svgClone.getAttribute('viewBox');
       const vbParts = vb ? vb.split(/[\s,]+/).map(Number) : null;
@@ -340,11 +341,20 @@ graph TD
     menu.style.top = (rect.bottom + 6) + 'px';
     menu.style.left = rect.left + 'px';
 
-    const svgEl = lbTransform.querySelector('svg');
-    const vb = svgEl?.getAttribute('viewBox');
+    // Use original preview SVG for real dimensions
+    const origSvg = lbOriginalSvg || lbTransform.querySelector('svg');
+    const vb = origSvg?.getAttribute('viewBox');
     const vbParts = vb ? vb.split(/[\s,]+/).map(Number) : null;
-    const baseW = vbParts ? Math.round(vbParts[2]) : parseInt(svgEl?.getAttribute('width')) || 800;
-    const baseH = vbParts ? Math.round(vbParts[3]) : parseInt(svgEl?.getAttribute('height')) || 600;
+    // For mermaid with useMaxWidth, viewBox has the natural size
+    // but we also check the SVG's rendered size in preview for accuracy
+    let baseW, baseH;
+    if (vbParts && vbParts[2] > 0) {
+      baseW = Math.round(vbParts[2]);
+      baseH = Math.round(vbParts[3]);
+    } else {
+      baseW = origSvg?.getBoundingClientRect?.()?.width || parseInt(origSvg?.getAttribute('width')) || 800;
+      baseH = origSvg?.getBoundingClientRect?.()?.height || parseInt(origSvg?.getAttribute('height')) || 600;
+    }
 
     const scales = [
       { pct: 50, s: 0.5 },
@@ -370,9 +380,13 @@ graph TD
       const svgEl = lbTransform.querySelector('svg');
       if (!svgEl) return;
 
+      const srcSvg = lbOriginalSvg || lbTransform.querySelector('svg');
+      if (!srcSvg) return;
       if (format === 'svg') {
-        const clone = svgEl.cloneNode(true);
+        const clone = srcSvg.cloneNode(true);
         clone.removeAttribute('style');
+        clone.removeAttribute('width');
+        clone.removeAttribute('height');
         const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
@@ -381,7 +395,7 @@ graph TD
         URL.revokeObjectURL(a.href);
       } else {
         const scale = parseFloat(item.dataset.scale);
-        exportSvgAsPng(svgEl, scale);
+        exportSvgAsPng(srcSvg, scale, baseW, baseH);
       }
     });
 
@@ -390,13 +404,13 @@ graph TD
     setTimeout(() => document.addEventListener('click', closeMenu), 0);
   }
 
-  function exportSvgAsPng(svgEl, scale) {
+  function exportSvgAsPng(svgEl, scale, baseW, baseH) {
     const clone = svgEl.cloneNode(true);
     clone.removeAttribute('style');
     const vb = clone.getAttribute('viewBox');
     const parts = vb ? vb.split(/[\s,]+/).map(Number) : null;
-    const w = parts ? parts[2] : parseFloat(clone.getAttribute('width')) || 800;
-    const h = parts ? parts[3] : parseFloat(clone.getAttribute('height')) || 600;
+    const w = baseW || (parts ? parts[2] : parseFloat(clone.getAttribute('width')) || 800);
+    const h = baseH || (parts ? parts[3] : parseFloat(clone.getAttribute('height')) || 600);
 
     clone.setAttribute('width', w);
     clone.setAttribute('height', h);
