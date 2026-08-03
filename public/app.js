@@ -318,22 +318,100 @@ graph TD
   $('#lb-reset').addEventListener('click', lbReset);
   $('#lb-download').addEventListener('click', () => {
     if (!lbSource) return;
-    const a = document.createElement('a');
     if (typeof lbSource === 'string') {
+      const a = document.createElement('a');
       a.href = lbSource;
       a.download = lbSource.split('/').pop() || 'image';
+      a.click();
     } else {
+      showDiagramDownloadMenu();
+    }
+  });
+
+  function showDiagramDownloadMenu() {
+    const btn = $('#lb-download');
+    const rect = btn.getBoundingClientRect();
+    let menu = $('#lb-download-menu');
+    if (menu) { menu.remove(); return; }
+
+    menu = document.createElement('div');
+    menu.id = 'lb-download-menu';
+    menu.className = 'lb-download-menu';
+    menu.style.top = (rect.bottom + 6) + 'px';
+    menu.style.left = rect.left + 'px';
+
+    menu.innerHTML = `
+      <div class="lb-dl-item" data-format="svg">SVG (vector)</div>
+      <div class="lb-dl-divider"></div>
+      <div class="lb-dl-label">PNG (raster)</div>
+      <div class="lb-dl-item" data-format="png" data-scale="1">PNG 100%</div>
+      <div class="lb-dl-item" data-format="png" data-scale="1.5">PNG 150%</div>
+      <div class="lb-dl-item" data-format="png" data-scale="2">PNG 200%</div>
+      <div class="lb-dl-item" data-format="png" data-scale="3">PNG 300%</div>
+      <div class="lb-dl-item" data-format="png" data-scale="5">PNG 500%</div>
+    `;
+
+    menu.addEventListener('click', (e) => {
+      const item = e.target.closest('.lb-dl-item');
+      if (!item) return;
+      menu.remove();
+      const format = item.dataset.format;
       const svgEl = lbTransform.querySelector('svg');
       if (!svgEl) return;
-      const clone = svgEl.cloneNode(true);
-      clone.removeAttribute('style');
-      const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' });
-      a.href = URL.createObjectURL(blob);
-      a.download = 'diagram.svg';
-    }
-    a.click();
-    if (a.href.startsWith('blob:')) URL.revokeObjectURL(a.href);
-  });
+
+      if (format === 'svg') {
+        const clone = svgEl.cloneNode(true);
+        clone.removeAttribute('style');
+        const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'diagram.svg';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      } else {
+        const scale = parseFloat(item.dataset.scale);
+        exportSvgAsPng(svgEl, scale);
+      }
+    });
+
+    document.body.appendChild(menu);
+    const closeMenu = (e) => { if (!menu.contains(e.target) && e.target !== btn) { menu.remove(); document.removeEventListener('click', closeMenu); } };
+    setTimeout(() => document.addEventListener('click', closeMenu), 0);
+  }
+
+  function exportSvgAsPng(svgEl, scale) {
+    const clone = svgEl.cloneNode(true);
+    clone.removeAttribute('style');
+    const vb = clone.getAttribute('viewBox');
+    const parts = vb ? vb.split(/[\s,]+/).map(Number) : null;
+    const w = parts ? parts[2] : parseFloat(clone.getAttribute('width')) || 800;
+    const h = parts ? parts[3] : parseFloat(clone.getAttribute('height')) || 600;
+
+    clone.setAttribute('width', w);
+    clone.setAttribute('height', h);
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+
+    const svgData = new XMLSerializer().serializeToString(clone);
+    const img = new Image();
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    const ctx = canvas.getContext('2d');
+
+    img.onload = () => {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(blob => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'diagram-' + Math.round(scale * 100) + 'pct.png';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }, 'image/png');
+    };
+    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+  }
 
   $('#lb-close').addEventListener('click', closeLightbox);
 
