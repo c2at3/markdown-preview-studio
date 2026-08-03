@@ -340,16 +340,27 @@ graph TD
     menu.style.top = (rect.bottom + 6) + 'px';
     menu.style.left = rect.left + 'px';
 
-    menu.innerHTML = `
-      <div class="lb-dl-item" data-format="svg">SVG (vector)</div>
-      <div class="lb-dl-divider"></div>
-      <div class="lb-dl-label">PNG (raster)</div>
-      <div class="lb-dl-item" data-format="png" data-scale="1">PNG 100%</div>
-      <div class="lb-dl-item" data-format="png" data-scale="1.5">PNG 150%</div>
-      <div class="lb-dl-item" data-format="png" data-scale="2">PNG 200%</div>
-      <div class="lb-dl-item" data-format="png" data-scale="3">PNG 300%</div>
-      <div class="lb-dl-item" data-format="png" data-scale="5">PNG 500%</div>
-    `;
+    const svgEl = lbTransform.querySelector('svg');
+    const vb = svgEl?.getAttribute('viewBox');
+    const vbParts = vb ? vb.split(/[\s,]+/).map(Number) : null;
+    const baseW = vbParts ? Math.round(vbParts[2]) : parseInt(svgEl?.getAttribute('width')) || 800;
+    const baseH = vbParts ? Math.round(vbParts[3]) : parseInt(svgEl?.getAttribute('height')) || 600;
+
+    const scales = [
+      { pct: 50, s: 0.5 },
+      { pct: 100, s: 1 },
+      { pct: 150, s: 1.5 },
+      { pct: 200, s: 2 },
+      { pct: 300, s: 3 },
+      { pct: 500, s: 5 },
+    ];
+    const pngItems = scales.map(({ pct, s }) => {
+      const w = Math.round(baseW * s);
+      const h = Math.round(baseH * s);
+      return '<div class="lb-dl-item" data-format="png" data-scale="' + s + '">PNG ' + pct + '% <span style="color:rgba(255,255,255,0.4);font-size:10px;margin-left:4px">' + w + '×' + h + '</span></div>';
+    }).join('');
+
+    menu.innerHTML = '<div class="lb-dl-item" data-format="svg">SVG (vector)</div><div class="lb-dl-divider"></div><div class="lb-dl-label">PNG (raster)</div>' + pngItems;
 
     menu.addEventListener('click', (e) => {
       const item = e.target.closest('.lb-dl-item');
