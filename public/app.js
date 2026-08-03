@@ -262,7 +262,7 @@ graph TD
   const lbZoomLevel = $('#lb-zoom-level');
 
   let lbZoom = 1, lbPanX = 0, lbPanY = 0, lbDragging = false, lbDragStart = { x: 0, y: 0 };
-  let lbIsSvg = false, lbSvgBaseW = 0, lbSvgBaseH = 0;
+  let lbIsSvg = false, lbSvgBaseW = 0, lbSvgBaseH = 0, lbSource = null;
   const LB_MIN_ZOOM = 0.25, LB_MAX_ZOOM = 5, LB_ZOOM_STEP = 0.25;
 
   function lbApplyTransform(animate) {
@@ -286,7 +286,7 @@ graph TD
   function lbReset() { lbZoom = 1; lbPanX = 0; lbPanY = 0; lbApplyTransform(true); }
 
   function openLightbox(content, caption) {
-    lbTransform.innerHTML = ''; lbZoom = 1; lbPanX = 0; lbPanY = 0; lbIsSvg = false;
+    lbTransform.innerHTML = ''; lbZoom = 1; lbPanX = 0; lbPanY = 0; lbIsSvg = false; lbSource = content;
     if (typeof content === 'string') {
       const img = document.createElement('img');
       img.className = 'lightbox-content'; img.src = content; img.alt = caption || ''; img.draggable = false;
@@ -316,6 +316,25 @@ graph TD
   $('#lb-zoom-in').addEventListener('click', () => { lbSetZoom(lbZoom + LB_ZOOM_STEP); lbApplyTransform(true); });
   $('#lb-zoom-out').addEventListener('click', () => { lbSetZoom(lbZoom - LB_ZOOM_STEP); lbApplyTransform(true); });
   $('#lb-reset').addEventListener('click', lbReset);
+  $('#lb-download').addEventListener('click', () => {
+    if (!lbSource) return;
+    const a = document.createElement('a');
+    if (typeof lbSource === 'string') {
+      a.href = lbSource;
+      a.download = lbSource.split('/').pop() || 'image';
+    } else {
+      const svgEl = lbTransform.querySelector('svg');
+      if (!svgEl) return;
+      const clone = svgEl.cloneNode(true);
+      clone.removeAttribute('style');
+      const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' });
+      a.href = URL.createObjectURL(blob);
+      a.download = 'diagram.svg';
+    }
+    a.click();
+    if (a.href.startsWith('blob:')) URL.revokeObjectURL(a.href);
+  });
+
   $('#lb-close').addEventListener('click', closeLightbox);
 
   lbViewport.addEventListener('wheel', (e) => {
