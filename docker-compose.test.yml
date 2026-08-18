@@ -3,7 +3,7 @@ services:
     build: .
     container_name: markdown-preview
     ports:
-      - "3456:3456"
+      - "127.0.0.1:3456:3456"
     volumes:
       - uploads:/app/data/uploads
     environment:
