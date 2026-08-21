@@ -160,6 +160,12 @@ graph TD
         body: JSON.stringify({ name, content })
       })).json();
     },
+    async updateTemplate(id, data) {
+      return (await fetch('/api/templates/' + id, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      })).json();
+    },
     async deleteTemplate(id) { await fetch('/api/templates/' + id, { method: 'DELETE' }); },
     async uploadImage(data, filename) {
       return (await fetch('/api/upload', {
@@ -754,6 +760,88 @@ graph TD
   const ctxColors = $('#context-menu-colors');
   let ctxFolderId = null;
 
+  // ===== File icons (right-click on a file) =====
+  const FILE_ICONS = [
+    { key: 'default', name: 'File', path: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>' },
+    { key: 'note', name: 'Note', path: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h8M8 17h8"/>' },
+    { key: 'bug', name: 'Bug', path: '<path d="M8 2l1.88 1.88M14.12 3.88L16 2"/><path d="M9 7.13V6a3 3 0 116 0v1.13"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 014-4h4a4 4 0 014 4v3c0 3.3-2.7 6-6 6z"/><path d="M12 20v-9M6.53 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M20.97 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4"/>' },
+    { key: 'vulnerability', name: 'Vulnerability', path: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4M12 16h.01"/>' },
+    { key: 'lock', name: 'Security', path: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>' },
+    { key: 'warning', name: 'Warning', path: '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4M12 17h.01"/>' },
+    { key: 'work', name: 'Work', path: '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/>' },
+    { key: 'checklist', name: 'Checklist', path: '<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>' },
+    { key: 'idea', name: 'Idea', path: '<path d="M9 18h6M10 22h4M12 2a6 6 0 016 6c0 3-2 4.5-3 6H9c-1-1.5-3-3-3-6a6 6 0 016-6z"/>' },
+    { key: 'book', name: 'Book', path: '<path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>' },
+    { key: 'chart', name: 'Chart', path: '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>' },
+    { key: 'star', name: 'Star', path: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>' },
+    { key: 'flag', name: 'Flag', path: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>' },
+    { key: 'rocket', name: 'Rocket', path: '<path d="M12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>' },
+    { key: 'calendar', name: 'Calendar', path: '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>' },
+    { key: 'code', name: 'Code', path: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>' },
+  ];
+
+  function fileIconHTML(f) {
+    const icon = FILE_ICONS.find(i => i.key === f.icon) || FILE_ICONS[0];
+    const color = f.icon_color || '';
+    return '<svg class="file-item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + (color || 'currentColor') + '" stroke-width="2">' + icon.path + '</svg>';
+  }
+
+  function showFileIconMenu(file, x, y) {
+    $('#file-icon-menu')?.remove();
+    const menu = document.createElement('div');
+    menu.id = 'file-icon-menu';
+    menu.className = 'context-menu';
+    menu.style.display = 'block';
+    menu.style.left = Math.min(x, window.innerWidth - 190) + 'px';
+    menu.style.top = Math.min(y, window.innerHeight - 280) + 'px';
+
+    const iconsHTML = FILE_ICONS.map(ic =>
+      '<div class="ctx-icon-swatch' + ((file.icon || 'default') === ic.key ? ' active' : '') + '" data-icon="' + ic.key + '" title="' + ic.name + '">' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' + ic.path + '</svg>' +
+      '</div>'
+    ).join('');
+
+    let colorsHTML = '<div class="ctx-color ctx-none' + (!file.icon_color ? ' active' : '') + '" data-color="" title="No color">✕</div>';
+    FOLDER_COLORS.forEach(c => {
+      colorsHTML += '<div class="ctx-color' + (file.icon_color === c.value ? ' active' : '') + '" data-color="' + c.value + '" style="background:' + c.value + '" title="' + c.name + '"></div>';
+    });
+
+    menu.innerHTML =
+      '<div class="context-menu-label">Icon</div>' +
+      '<div class="ctx-icons-grid">' + iconsHTML + '</div>' +
+      '<div class="context-menu-divider"></div>' +
+      '<div class="context-menu-label">Color</div>' +
+      '<div class="context-menu-colors">' + colorsHTML + '</div>';
+    document.body.appendChild(menu);
+
+    menu.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const iconSwatch = e.target.closest('.ctx-icon-swatch');
+      if (iconSwatch) {
+        const icon = iconSwatch.dataset.icon;
+        file.icon = icon === 'default' ? null : icon;
+        await api.updateFile(file.id, { icon: file.icon });
+        menu.querySelectorAll('.ctx-icon-swatch').forEach(s => s.classList.toggle('active', s.dataset.icon === icon));
+        renderSidebar();
+        return;
+      }
+      const colorSwatch = e.target.closest('.ctx-color');
+      if (colorSwatch) {
+        const color = colorSwatch.dataset.color;
+        file.icon_color = color || null;
+        await api.updateFile(file.id, { icon_color: file.icon_color });
+        menu.querySelectorAll('.ctx-color').forEach(s => s.classList.toggle('active', s.dataset.color === color));
+        renderSidebar();
+        return;
+      }
+    });
+
+    const closeMenu = (e) => {
+      if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', closeMenu); document.removeEventListener('contextmenu', closeMenu); }
+    };
+    setTimeout(() => { document.addEventListener('click', closeMenu); document.addEventListener('contextmenu', closeMenu); }, 0);
+  }
+
   // Build color swatches
   let colorsHTML = '<div class="ctx-color ctx-none" data-color="" title="No color">✕</div>';
   FOLDER_COLORS.forEach(c => { colorsHTML += '<div class="ctx-color" data-color="' + c.value + '" style="background:' + c.value + '" title="' + c.name + '"></div>'; });
@@ -888,8 +976,10 @@ graph TD
 
   function buildFileEl(f) {
     const el = document.createElement('div'); el.className = 'file-item' + (f.id === activeFileId ? ' active' : ''); el.draggable = true; el.dataset.fileId = f.id;
-    el.innerHTML = `<svg class="file-item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="file-item-name">${escapeHtml(f.name || 'Untitled')}</span><span class="file-item-pin ${f.is_pinned ? 'pinned' : ''}" data-action="pin" title="Pin"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></span><div class="file-item-actions"><button data-action="delete" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button></div>`;
+    const lockHTML = f.is_shared ? '' : '<span class="file-item-lock" title="Private — not shared"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></span>';
+    el.innerHTML = `${fileIconHTML(f)}<span class="file-item-name">${escapeHtml(f.name || 'Untitled')}</span>${lockHTML}<span class="file-item-pin ${f.is_pinned ? 'pinned' : ''}" data-action="pin" title="Pin"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></span><div class="file-item-actions"><button data-action="delete" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button></div>`;
     el.addEventListener('click', (e) => { const action = e.target.closest('[data-action]')?.dataset.action; if (action === 'delete') { deleteFile(f.id); e.stopPropagation(); return; } if (action === 'pin') { togglePin(f.id, !f.is_pinned); e.stopPropagation(); return; } switchFile(f.id); });
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); showFileIconMenu(f, e.clientX, e.clientY); });
     el.addEventListener('dragstart', (e) => { dragItem = f.id; dragType = 'file'; el.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
     el.addEventListener('dragend', () => { el.classList.remove('dragging'); dragItem = null; dragType = null; });
     el.addEventListener('dragover', (e) => { if (!dragItem || dragType !== 'file' || dragItem === f.id) return; e.preventDefault(); el.classList.add('drag-over'); });
@@ -918,7 +1008,7 @@ graph TD
     await loadAll(); await switchFile(file.id); fileNameInput.focus(); fileNameInput.select();
   }
 
-  async function showNewFileMenu() {
+  function showNewFileMenu() {
     const btn = $('#btn-new-file');
     const existing = $('#new-file-menu');
     if (existing) { existing.remove(); return; }
@@ -930,41 +1020,40 @@ graph TD
     menu.style.display = 'block';
     menu.style.top = (rect.bottom + 6) + 'px';
     menu.style.left = rect.left + 'px';
-    menu.innerHTML = '<div style="padding:6px 8px;color:var(--text-3);font-size:12px">Loading...</div>';
+    menu.innerHTML =
+      '<button class="context-menu-item" data-action="blank">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><path d="M13 2v7h7"/></svg>' +
+        'Blank file</button>' +
+      '<div class="context-menu-divider"></div>' +
+      '<div class="context-menu-label">Templates</div>' +
+      '<div class="ctx-templates-slot" style="padding:6px 8px;color:var(--text-3);font-size:12px">Loading...</div>' +
+      '<div class="context-menu-divider"></div>' +
+      '<button class="context-menu-item" data-action="manage">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>' +
+        'Manage templates…</button>';
     document.body.appendChild(menu);
 
-    const templates = await api.getTemplates();
-    let html = '<button class="context-menu-item" data-action="blank">' +
-      '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><path d="M13 2v7h7"/></svg>' +
-      'Blank file</button>';
-    if (templates.length) {
-      html += '<div class="context-menu-divider"></div><div class="context-menu-label">Templates</div>';
-      html += templates.map(t =>
-        '<div class="context-menu-item file-template-item" data-action="use" data-id="' + t.id + '">' +
+    let templates = [];
+    api.getTemplates().then(list => {
+      templates = list;
+      const slot = menu.querySelector('.ctx-templates-slot');
+      if (!slot) return; // menu already closed
+      if (!list.length) { slot.textContent = 'No templates yet'; return; }
+      slot.outerHTML = list.map(t =>
+        '<div class="context-menu-item" data-action="use" data-id="' + t.id + '">' +
           '<span class="file-template-name">' + escapeHtml(t.name) + '</span>' +
-          '<button class="file-template-delete" data-action="delete" data-id="' + t.id + '" title="Delete template">' +
-            '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
-          '</button>' +
         '</div>'
       ).join('');
-    }
-    menu.innerHTML = html;
+    });
 
     menu.addEventListener('click', async (e) => {
-      const delBtn = e.target.closest('[data-action="delete"]');
-      if (delBtn) {
-        e.stopPropagation();
-        if (!confirm('Delete this template?')) return;
-        await api.deleteTemplate(delBtn.dataset.id);
-        menu.remove();
-        showNewFileMenu();
-        return;
-      }
       const item = e.target.closest('[data-action]');
       if (!item) return;
       menu.remove();
       if (item.dataset.action === 'blank') {
         await createNewFile();
+      } else if (item.dataset.action === 'manage') {
+        openTemplateManager();
       } else if (item.dataset.action === 'use') {
         const t = templates.find(x => x.id === item.dataset.id);
         if (t) await createNewFile(null, t.name, t.content);
@@ -975,6 +1064,96 @@ graph TD
       if (!menu.contains(e.target) && e.target !== btn) { menu.remove(); document.removeEventListener('click', closeMenu); }
     };
     setTimeout(() => document.addEventListener('click', closeMenu), 0);
+  }
+
+  // ===== Template manager =====
+  async function openTemplateManager() {
+    const templates = await api.getTemplates();
+    renderTemplateManager(templates);
+    modalOverlay.classList.add('show');
+  }
+
+  function renderTemplateManager(templates) {
+    modalTitle.textContent = 'Manage templates';
+    if (!templates.length) {
+      modalBody.innerHTML = '<p style="color:var(--text-3);font-size:13px;text-align:center;padding:24px 0">No templates yet. Use "Save as template" from the toolbar to create one.</p>';
+      return;
+    }
+    modalBody.innerHTML = '<div class="template-list" style="max-height:340px;overflow-y:auto">' +
+      templates.map(t =>
+        '<div class="file-item" draggable="true" data-id="' + t.id + '">' +
+          '<svg class="file-item-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="8" cy="6" r="1.5"/><circle cx="16" cy="6" r="1.5"/><circle cx="8" cy="12" r="1.5"/><circle cx="16" cy="12" r="1.5"/><circle cx="8" cy="18" r="1.5"/><circle cx="16" cy="18" r="1.5"/></svg>' +
+          '<span class="file-item-name">' + escapeHtml(t.name) + '</span>' +
+          '<div class="file-item-actions">' +
+            '<button data-action="rename" data-id="' + t.id + '" title="Rename"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>' +
+            '<button data-action="edit" data-id="' + t.id + '" title="Edit content"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg></button>' +
+            '<button data-action="delete" data-id="' + t.id + '" title="Delete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0l-1 14a2 2 0 01-2 2H7a2 2 0 01-2-2L4 6"/></svg></button>' +
+          '</div>' +
+        '</div>'
+      ).join('') +
+      '</div>';
+
+    const list = modalBody.querySelector('.template-list');
+    let dragId = null;
+    list.querySelectorAll('.file-item').forEach(row => {
+      row.addEventListener('dragstart', () => { dragId = row.dataset.id; row.style.opacity = '0.4'; });
+      row.addEventListener('dragend', () => { row.style.opacity = ''; });
+      row.addEventListener('dragover', (e) => e.preventDefault());
+      row.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        if (!dragId || dragId === row.dataset.id) return;
+        const from = templates.findIndex(t => t.id === dragId);
+        const to = templates.findIndex(t => t.id === row.dataset.id);
+        if (from < 0 || to < 0) return;
+        const [moved] = templates.splice(from, 1);
+        templates.splice(to, 0, moved);
+        await Promise.all(templates.map((t, i) => api.updateTemplate(t.id, { sort_order: i })));
+        renderTemplateManager(templates);
+      });
+    });
+
+    modalBody.querySelectorAll('[data-action]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        const t = templates.find(x => x.id === id);
+        if (!t) return;
+        if (btn.dataset.action === 'delete') {
+          if (!confirm('Delete template "' + t.name + '"?')) return;
+          await api.deleteTemplate(id);
+          renderTemplateManager(templates.filter(x => x.id !== id));
+        } else if (btn.dataset.action === 'rename') {
+          const nameEl = btn.closest('.file-item').querySelector('.file-item-name');
+          const input = document.createElement('input');
+          input.type = 'text'; input.value = t.name; input.className = 'file-name-input'; input.style.flex = '1';
+          nameEl.replaceWith(input);
+          input.focus(); input.select();
+          const commit = async () => {
+            const newName = input.value.trim() || t.name;
+            t.name = newName;
+            await api.updateTemplate(id, { name: newName });
+            renderTemplateManager(templates);
+          };
+          input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur(); if (ev.key === 'Escape') { input.value = t.name; input.blur(); } });
+          input.addEventListener('blur', commit, { once: true });
+        } else if (btn.dataset.action === 'edit') {
+          modalTitle.textContent = 'Edit template — ' + t.name;
+          modalBody.innerHTML =
+            '<textarea id="template-content-input" spellcheck="false" style="width:100%;min-height:280px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:var(--font-mono, monospace);font-size:12.5px;resize:vertical">' + escapeHtml(t.content) + '</textarea>' +
+            '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">' +
+              '<button class="btn-new-folder" id="template-edit-back" style="margin:0;width:auto">Back</button>' +
+              '<button class="btn-new-file" id="template-edit-save" style="margin:0;width:auto">Save</button>' +
+            '</div>';
+          $('#template-edit-back').addEventListener('click', () => renderTemplateManager(templates));
+          $('#template-edit-save').addEventListener('click', async () => {
+            const content = $('#template-content-input').value;
+            t.content = content;
+            await api.updateTemplate(id, { content });
+            renderTemplateManager(templates);
+          });
+        }
+      });
+    });
   }
 
   async function deleteFile(id) {
@@ -1152,6 +1331,7 @@ graph TD
         const r = await api.shareFile(activeFileId);
         modalOverlay.classList.remove('show');
         showToast('Public link created');
+        await loadAll();
         shareCurrentFile();
       });
     }
@@ -1163,6 +1343,7 @@ graph TD
         await fetch('/api/files/' + activeFileId + '/share', { method: 'DELETE' });
         modalOverlay.classList.remove('show');
         showToast('Public link revoked');
+        await loadAll();
         shareCurrentFile();
       });
     }
@@ -1174,6 +1355,7 @@ graph TD
         await fetch('/api/files/' + activeFileId + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'view' }) });
         modalOverlay.classList.remove('show');
         showToast('View link revoked');
+        await loadAll();
         shareCurrentFile();
       });
     }
@@ -1185,6 +1367,7 @@ graph TD
         await fetch('/api/files/' + activeFileId + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'edit' }) });
         modalOverlay.classList.remove('show');
         showToast('Edit link revoked');
+        await loadAll();
         shareCurrentFile();
       });
     }
@@ -1201,6 +1384,7 @@ graph TD
         });
         modalOverlay.classList.remove('show');
         showToast('Private links generated');
+        await loadAll();
         shareCurrentFile();
       });
     }
@@ -1346,6 +1530,16 @@ graph TD
 
   // ===== Toolbar insert helpers =====
   function insertText(text) { cm.replaceSelection(text); cm.focus(); scheduleRender(); scheduleSave(); }
+  function buildMarkdownTable(cols, rows) {
+    cols = Math.max(1, Math.min(20, cols || 2));
+    rows = Math.max(1, Math.min(50, rows || 1));
+    const header = '| ' + Array.from({ length: cols }, (_, i) => 'Column ' + (i + 1)).join(' | ') + ' |';
+    const divider = '| ' + Array.from({ length: cols }, () => '--------').join(' | ') + ' |';
+    const bodyRows = Array.from({ length: rows }, (_, r) =>
+      '| ' + Array.from({ length: cols }, (_, c) => 'Cell ' + (r + 1) + '.' + (c + 1)).join(' | ') + ' |'
+    );
+    return '\n' + [header, divider, ...bodyRows].join('\n') + '\n';
+  }
   function insertAround(before, after) {
     const sel = cm.getSelection() || 'text';
     cm.replaceSelection(before + sel + after);
@@ -1465,7 +1659,35 @@ graph TD
     $('#btn-heading').addEventListener('click', () => insertAtLine('## '));
     $('#btn-link').addEventListener('click', () => insertAround('[', '](url)'));
     $('#btn-code').addEventListener('click', () => insertAround('```\n', '\n```'));
-    $('#btn-table').addEventListener('click', () => insertText('\n| Column 1 | Column 2 |\n| -------- | -------- |\n| Cell 1   | Cell 2   |\n'));
+    $('#btn-table').addEventListener('click', () => {
+      modalTitle.textContent = 'Insert table';
+      modalBody.innerHTML = `
+        <div style="display:flex;gap:12px;margin-bottom:16px">
+          <div style="flex:1">
+            <label style="display:block;font-size:12px;color:var(--text-2);margin-bottom:6px">Columns</label>
+            <input type="number" id="table-cols-input" class="file-name-input" style="width:100%" min="1" max="20" value="2">
+          </div>
+          <div style="flex:1">
+            <label style="display:block;font-size:12px;color:var(--text-2);margin-bottom:6px">Rows</label>
+            <input type="number" id="table-rows-input" class="file-name-input" style="width:100%" min="1" max="50" value="1">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn-new-folder" id="table-cancel" style="margin:0;width:auto">Cancel</button>
+          <button class="btn-new-file" id="table-insert" style="margin:0;width:auto">Insert</button>
+        </div>
+      `;
+      modalOverlay.classList.add('show');
+      const colsInput = $('#table-cols-input'), rowsInput = $('#table-rows-input');
+      colsInput.focus(); colsInput.select();
+      const doInsert = () => {
+        insertText(buildMarkdownTable(parseInt(colsInput.value, 10), parseInt(rowsInput.value, 10)));
+        modalOverlay.classList.remove('show');
+      };
+      $('#table-cancel').addEventListener('click', () => modalOverlay.classList.remove('show'));
+      $('#table-insert').addEventListener('click', doInsert);
+      [colsInput, rowsInput].forEach(inp => inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') doInsert(); }));
+    });
 
     $('#btn-copy-md').addEventListener('click', () => navigator.clipboard.writeText(cm.getValue()).then(() => showToast('Markdown copied')));
     $('#btn-copy-html').addEventListener('click', () => navigator.clipboard.writeText(preview.innerHTML).then(() => showToast('HTML copied')));

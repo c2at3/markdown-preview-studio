@@ -179,6 +179,19 @@ app.post('/api/templates', async (req, res) => {
   res.status(201).json(await db.get('SELECT * FROM templates WHERE id = ?', [id]));
 });
 
+app.put('/api/templates/:id', async (req, res) => {
+  const { name, content, sort_order } = req.body;
+  const sets = [], vals = [];
+  if (name !== undefined) { sets.push('name = ?'); vals.push(name); }
+  if (content !== undefined) { sets.push('content = ?'); vals.push(content); }
+  if (sort_order !== undefined) { sets.push('sort_order = ?'); vals.push(sort_order); }
+  if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+  vals.push(req.params.id);
+  const result = await db.run(`UPDATE templates SET ${sets.join(', ')} WHERE id = ?`, vals);
+  if (!result.changes) return res.status(404).json({ error: 'Not found' });
+  res.json(await db.get('SELECT * FROM templates WHERE id = ?', [req.params.id]));
+});
+
 app.delete('/api/templates/:id', async (req, res) => {
   const result = await db.run('DELETE FROM templates WHERE id = ?', [req.params.id]);
   if (!result.changes) return res.status(404).json({ error: 'Not found' });
@@ -187,7 +200,11 @@ app.delete('/api/templates/:id', async (req, res) => {
 
 // ===== FILES =====
 app.get('/api/files', async (req, res) => {
-  res.json(await db.query('SELECT id, name, folder_id, is_pinned, sort_order, created_at, updated_at FROM files ORDER BY is_pinned DESC, sort_order, updated_at DESC'));
+  res.json(await db.query(`
+    SELECT id, name, folder_id, is_pinned, sort_order, icon, icon_color, created_at, updated_at,
+      (share_id IS NOT NULL OR private_view_token IS NOT NULL OR private_edit_token IS NOT NULL) AS is_shared
+    FROM files ORDER BY is_pinned DESC, sort_order, updated_at DESC
+  `));
 });
 
 app.post('/api/files', async (req, res) => {
@@ -209,13 +226,15 @@ app.get('/api/files/:id', async (req, res) => {
 });
 
 app.put('/api/files/:id', async (req, res) => {
-  const { name, content, is_pinned, folder_id, sort_order } = req.body;
+  const { name, content, is_pinned, folder_id, sort_order, icon, icon_color } = req.body;
   const sets = [], vals = [];
   if (name !== undefined) { sets.push('name = ?'); vals.push(name); }
   if (content !== undefined) { sets.push('content = ?'); vals.push(content); }
   if (is_pinned !== undefined) { sets.push('is_pinned = ?'); vals.push(!!is_pinned); }
   if (folder_id !== undefined) { sets.push('folder_id = ?'); vals.push(folder_id || null); }
   if (sort_order !== undefined) { sets.push('sort_order = ?'); vals.push(sort_order); }
+  if (icon !== undefined) { sets.push('icon = ?'); vals.push(icon || null); }
+  if (icon_color !== undefined) { sets.push('icon_color = ?'); vals.push(icon_color || null); }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
   sets.push('updated_at = NOW()');
   vals.push(req.params.id);
