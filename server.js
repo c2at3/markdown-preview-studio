@@ -165,6 +165,26 @@ app.delete('/api/folders/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ===== TEMPLATES =====
+app.get('/api/templates', async (req, res) => {
+  res.json(await db.query('SELECT * FROM templates ORDER BY sort_order, created_at'));
+});
+
+app.post('/api/templates', async (req, res) => {
+  const id = nanoid(10);
+  const { name, content } = req.body;
+  const maxOrder = await db.get('SELECT MAX(sort_order) as m FROM templates');
+  await db.run('INSERT INTO templates (id, name, content, sort_order) VALUES (?, ?, ?, ?)',
+    [id, name || 'Untitled', content || '', (maxOrder?.m || 0) + 1]);
+  res.status(201).json(await db.get('SELECT * FROM templates WHERE id = ?', [id]));
+});
+
+app.delete('/api/templates/:id', async (req, res) => {
+  const result = await db.run('DELETE FROM templates WHERE id = ?', [req.params.id]);
+  if (!result.changes) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true });
+});
+
 // ===== FILES =====
 app.get('/api/files', async (req, res) => {
   res.json(await db.query('SELECT id, name, folder_id, is_pinned, sort_order, created_at, updated_at FROM files ORDER BY is_pinned DESC, sort_order, updated_at DESC'));
