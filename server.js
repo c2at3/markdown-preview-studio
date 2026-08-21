@@ -109,7 +109,9 @@ app.get('/setup.html', async (req, res, next) => {
   next();
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache')
+}));
 
 // ===== AUTH MIDDLEWARE =====
 app.use('/api', async (req, res, next) => {
