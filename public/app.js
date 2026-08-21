@@ -153,6 +153,14 @@ graph TD
       })).json();
     },
     async deleteFolder(id) { await fetch('/api/folders/' + id, { method: 'DELETE' }); },
+    async getTemplates() { return (await fetch('/api/templates')).json(); },
+    async createTemplate(name, content) {
+      return (await fetch('/api/templates', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, content })
+      })).json();
+    },
+    async deleteTemplate(id) { await fetch('/api/templates/' + id, { method: 'DELETE' }); },
     async uploadImage(data, filename) {
       return (await fetch('/api/upload', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -905,9 +913,68 @@ graph TD
     renderSidebar(); render(); showSaveStatus('Loaded');
   }
 
-  async function createNewFile(folderId) {
-    const file = await api.createFile('Untitled', '', folderId || null);
+  async function createNewFile(folderId, name, content) {
+    const file = await api.createFile(name || 'Untitled', content || '', folderId || null);
     await loadAll(); await switchFile(file.id); fileNameInput.focus(); fileNameInput.select();
+  }
+
+  async function showNewFileMenu() {
+    const btn = $('#btn-new-file');
+    const existing = $('#new-file-menu');
+    if (existing) { existing.remove(); return; }
+
+    const rect = btn.getBoundingClientRect();
+    const menu = document.createElement('div');
+    menu.id = 'new-file-menu';
+    menu.className = 'context-menu';
+    menu.style.display = 'block';
+    menu.style.top = (rect.bottom + 6) + 'px';
+    menu.style.left = rect.left + 'px';
+    menu.innerHTML = '<div style="padding:6px 8px;color:var(--text-3);font-size:12px">Loading...</div>';
+    document.body.appendChild(menu);
+
+    const templates = await api.getTemplates();
+    let html = '<button class="context-menu-item" data-action="blank">' +
+      '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><path d="M13 2v7h7"/></svg>' +
+      'Blank file</button>';
+    if (templates.length) {
+      html += '<div class="context-menu-divider"></div><div class="context-menu-label">Templates</div>';
+      html += templates.map(t =>
+        '<div class="context-menu-item file-template-item" data-action="use" data-id="' + t.id + '">' +
+          '<span class="file-template-name">' + escapeHtml(t.name) + '</span>' +
+          '<button class="file-template-delete" data-action="delete" data-id="' + t.id + '" title="Delete template">' +
+            '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
+          '</button>' +
+        '</div>'
+      ).join('');
+    }
+    menu.innerHTML = html;
+
+    menu.addEventListener('click', async (e) => {
+      const delBtn = e.target.closest('[data-action="delete"]');
+      if (delBtn) {
+        e.stopPropagation();
+        if (!confirm('Delete this template?')) return;
+        await api.deleteTemplate(delBtn.dataset.id);
+        menu.remove();
+        showNewFileMenu();
+        return;
+      }
+      const item = e.target.closest('[data-action]');
+      if (!item) return;
+      menu.remove();
+      if (item.dataset.action === 'blank') {
+        await createNewFile();
+      } else if (item.dataset.action === 'use') {
+        const t = templates.find(x => x.id === item.dataset.id);
+        if (t) await createNewFile(null, t.name, t.content);
+      }
+    });
+
+    const closeMenu = (e) => {
+      if (!menu.contains(e.target) && e.target !== btn) { menu.remove(); document.removeEventListener('click', closeMenu); }
+    };
+    setTimeout(() => document.addEventListener('click', closeMenu), 0);
   }
 
   async function deleteFile(id) {
@@ -1338,7 +1405,29 @@ graph TD
       saveTimer = setTimeout(async () => { await api.updateFile(activeFileId, { name: fileNameInput.value }); const f = files.find(x => x.id === activeFileId); if (f) f.name = fileNameInput.value; renderSidebar(); showSaveStatus('Saved'); }, 400);
     });
 
-    $('#btn-new-file').addEventListener('click', () => createNewFile());
+    $('#btn-new-file').addEventListener('click', showNewFileMenu);
+    $('#btn-save-template').addEventListener('click', () => {
+      modalTitle.textContent = 'Save as template';
+      modalBody.innerHTML = `
+        <div style="margin-bottom:16px">
+          <label style="display:block;font-size:12px;color:var(--text-2);margin-bottom:6px">Template name</label>
+          <input type="text" id="template-name-input" class="file-name-input" style="width:100%" value="${escapeHtml(fileNameInput.value || 'Untitled')}" spellcheck="false">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn-new-folder" id="template-cancel" style="margin:0;width:auto">Cancel</button>
+          <button class="btn-new-file" id="template-save" style="margin:0;width:auto">Save</button>
+        </div>
+      `;
+      modalOverlay.classList.add('show');
+      const input = $('#template-name-input');
+      input.focus(); input.select();
+      $('#template-cancel').addEventListener('click', () => modalOverlay.classList.remove('show'));
+      $('#template-save').addEventListener('click', async () => {
+        await api.createTemplate(input.value.trim() || 'Untitled', cm.getValue());
+        modalOverlay.classList.remove('show');
+        showToast('Saved as template');
+      });
+    });
     $('#btn-new-folder').addEventListener('click', createNewFolder);
     $('#btn-toggle-sidebar').addEventListener('click', () => { sidebar.classList.add('collapsed'); $('#btn-open-sidebar').style.display = 'flex'; });
     $('#btn-open-sidebar').addEventListener('click', () => { sidebar.classList.remove('collapsed'); $('#btn-open-sidebar').style.display = 'none'; });
