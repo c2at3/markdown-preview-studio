@@ -257,7 +257,10 @@ graph TD
 
   function render() {
     isRendering = true;
-    preview.innerHTML = marked.parse(cm.getValue());
+    preview.innerHTML = DOMPurify.sanitize(marked.parse(cm.getValue()), {
+      ADD_TAGS: ['input'],
+      ADD_ATTR: ['target', 'checked', 'disabled', 'data-mermaid']
+    });
     preview.querySelectorAll('a').forEach(a => {
       a.setAttribute('target', '_blank');
       a.setAttribute('rel', 'noopener noreferrer');
