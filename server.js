@@ -118,11 +118,45 @@ app.use('/api', async (req, res, next) => {
   const publicPrefixes = ['/auth/', '/shared/', '/private/', '/private-edit/'];
   const apiPath = req.path;
   if (publicPrefixes.some(p => apiPath.startsWith(p))) return next();
+
+  const authHeader = req.headers['authorization'] || '';
+  const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (bearerMatch) {
+    const key = await auth.validateApiKey(bearerMatch[1].trim());
+    if (!key) return res.status(401).json({ error: 'Invalid API key' });
+    // API keys (third-party integrations) may only call this one endpoint.
+    // Everything else - files, folders, templates, sharing, apikeys - stays
+    // reachable only via a logged-in session (the app's own web UI).
+    const isUploadCall = apiPath === '/files/upload' && (req.method === 'POST' || req.method === 'DELETE');
+    if (!isUploadCall) {
+      return res.status(403).json({ error: 'This API key can only be used with POST/DELETE /api/files/upload' });
+    }
+    req.user = { id: 'api:' + key.id, username: key.name, role: 'admin' };
+    req.apiKey = key;
+    return next();
+  }
+
   const token = req.cookies.session || req.headers['x-session-token'];
   const user = await auth.validateSession(token);
   if (!user) return res.status(401).json({ error: 'Not authenticated' });
   req.user = user;
   next();
+});
+
+// ===== API KEYS (session auth only, see middleware above) =====
+app.get('/api/apikeys', async (req, res) => {
+  res.json(await auth.listApiKeys());
+});
+
+app.post('/api/apikeys', async (req, res) => {
+  const { name } = req.body;
+  res.status(201).json(await auth.createApiKey(name));
+});
+
+app.delete('/api/apikeys/:id', async (req, res) => {
+  const ok = await auth.revokeApiKey(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true });
 });
 
 // ===== FOLDERS =====
@@ -157,13 +191,7 @@ app.put('/api/folders/:id', async (req, res) => {
 });
 
 app.delete('/api/folders/:id', async (req, res) => {
-  await db.run('UPDATE files SET folder_id = NULL WHERE folder_id = ?', [req.params.id]);
-  const children = await db.query('SELECT id FROM folders WHERE parent_id = ?', [req.params.id]);
-  for (const c of children) {
-    await db.run('UPDATE files SET folder_id = NULL WHERE folder_id = ?', [c.id]);
-    await db.run('DELETE FROM folders WHERE id = ?', [c.id]);
-  }
-  await db.run('DELETE FROM folders WHERE id = ?', [req.params.id]);
+  await deleteFolderCascade(req.params.id);
   res.json({ ok: true });
 });
 
@@ -219,6 +247,153 @@ app.post('/api/files', async (req, res) => {
   await db.run('INSERT INTO files (id, name, content, folder_id, sort_order) VALUES (?, ?, ?, ?, ?)',
     [id, name || 'Untitled', content || '', fid, (maxOrder?.m || 0) + 1]);
   res.status(201).json(await db.get('SELECT * FROM files WHERE id = ?', [id]));
+});
+
+// Resolves a "Parent/Child/Grandchild" path to a folder id, creating segments
+// that don't exist yet (unless autoCreate is false, in which case it throws).
+async function resolveFolderPath(pathStr, autoCreate, defaultColor) {
+  const segments = (pathStr || '').split('/').map(s => s.trim()).filter(Boolean);
+  let parentId = null;
+  const createdIds = [];
+  for (const seg of segments) {
+    const existing = parentId
+      ? await db.get('SELECT id FROM folders WHERE name = ? AND parent_id = ?', [seg, parentId])
+      : await db.get('SELECT id FROM folders WHERE name = ? AND parent_id IS NULL', [seg]);
+    if (existing) { parentId = existing.id; continue; }
+    if (!autoCreate) {
+      const err = new Error(`Folder path not found: "${segments.join('/')}" (missing "${seg}")`);
+      err.status = 404;
+      throw err;
+    }
+    const id = nanoid(10);
+    const maxOrder = parentId
+      ? await db.get('SELECT MAX(sort_order) as m FROM folders WHERE parent_id = ?', [parentId])
+      : await db.get('SELECT MAX(sort_order) as m FROM folders WHERE parent_id IS NULL');
+    await db.run('INSERT INTO folders (id, name, parent_id, sort_order, color) VALUES (?, ?, ?, ?, ?)',
+      [id, seg, parentId, (maxOrder?.m || 0) + 1, defaultColor || null]);
+    parentId = id;
+    createdIds.push(id);
+  }
+  return { folder_id: parentId, created_folder_ids: createdIds };
+}
+
+async function findFileInFolder(fname, folderId) {
+  return folderId
+    ? db.get('SELECT id FROM files WHERE name = ? AND folder_id = ?', [fname, folderId])
+    : db.get('SELECT id FROM files WHERE name = ? AND folder_id IS NULL', [fname]);
+}
+
+async function deleteFolderCascade(id) {
+  await db.run('UPDATE files SET folder_id = NULL WHERE folder_id = ?', [id]);
+  const children = await db.query('SELECT id FROM folders WHERE parent_id = ?', [id]);
+  for (const c of children) {
+    await db.run('UPDATE files SET folder_id = NULL WHERE folder_id = ?', [c.id]);
+    await db.run('DELETE FROM folders WHERE id = ?', [c.id]);
+  }
+  await db.run('DELETE FROM folders WHERE id = ?', [id]);
+}
+
+const COLOR_NAMES = {
+  red: '#ef4444', orange: '#f97316', yellow: '#eab308', green: '#22c55e',
+  blue: '#3b82f6', purple: '#a855f7', pink: '#ec4899', teal: '#14b8a6', gray: '#6b7280'
+};
+const VALID_ICONS = ['default', 'note', 'bug', 'vulnerability', 'lock', 'warning', 'work', 'checklist', 'idea', 'book', 'chart', 'star', 'flag', 'rocket', 'calendar', 'code'];
+
+// Colors and icons are a closed set, not free-form input - resolves a color
+// *name* (e.g. "red") to its hex value, or an icon key to itself, throwing a
+// 400 if the caller passed something outside the set. Returns undefined
+// unchanged so "field omitted" and "field invalid" stay distinguishable.
+function resolveColorName(value, field) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const hex = COLOR_NAMES[String(value).toLowerCase()];
+  if (!hex) {
+    const err = new Error(`Invalid ${field}: "${value}". Must be one of: ${Object.keys(COLOR_NAMES).join(', ')}`);
+    err.status = 400;
+    throw err;
+  }
+  return hex;
+}
+
+function resolveIconKey(value) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (!VALID_ICONS.includes(String(value).toLowerCase())) {
+    const err = new Error(`Invalid icon: "${value}". Must be one of: ${VALID_ICONS.join(', ')}`);
+    err.status = 400;
+    throw err;
+  }
+  return String(value).toLowerCase();
+}
+
+// The single endpoint API keys are allowed to call (see the /api auth
+// middleware below). Addresses a file by a human-readable "folder path +
+// filename" instead of ids - POST creates it, or overwrites it in place
+// (same id, no duplicate) if one already exists there; DELETE removes the
+// file (with filename) or the folder itself (without filename).
+app.post('/api/files/upload', async (req, res) => {
+  const { folder, auto_create, filename, name, content } = req.body;
+  const fname = filename || name;
+  if (!fname) return res.status(400).json({ error: 'filename is required' });
+
+  let icon, iconColor, resolved;
+  try {
+    icon = resolveIconKey(req.body.icon);
+    iconColor = resolveColorName(req.body.color_file !== undefined ? req.body.color_file : req.body.icon_color, 'color_file');
+    const folderColor = resolveColorName(req.body.color_folder, 'color_folder');
+    resolved = await resolveFolderPath(folder, auto_create !== false, folderColor);
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    throw e;
+  }
+  const fid = resolved.folder_id;
+
+  const existing = await findFileInFolder(fname, fid);
+  if (existing) {
+    const sets = ['updated_at = NOW()'], vals = [];
+    if (content !== undefined) { sets.push('content = ?'); vals.push(content); }
+    if (icon !== undefined) { sets.push('icon = ?'); vals.push(icon); }
+    if (iconColor !== undefined) { sets.push('icon_color = ?'); vals.push(iconColor); }
+    vals.push(existing.id);
+    await db.run(`UPDATE files SET ${sets.join(', ')} WHERE id = ?`, vals);
+    const file = await db.get('SELECT * FROM files WHERE id = ?', [existing.id]);
+    return res.json({ ...file, action: 'updated', created_folder_ids: resolved.created_folder_ids });
+  }
+
+  const id = nanoid(12);
+  const maxOrder = fid
+    ? await db.get('SELECT MAX(sort_order) as m FROM files WHERE folder_id = ?', [fid])
+    : await db.get('SELECT MAX(sort_order) as m FROM files WHERE folder_id IS NULL');
+  await db.run(
+    'INSERT INTO files (id, name, content, folder_id, sort_order, icon, icon_color) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, fname, content || '', fid, (maxOrder?.m || 0) + 1, icon || null, iconColor || null]
+  );
+  const file = await db.get('SELECT * FROM files WHERE id = ?', [id]);
+  res.status(201).json({ ...file, action: 'created', created_folder_ids: resolved.created_folder_ids });
+});
+
+app.delete('/api/files/upload', async (req, res) => {
+  const { folder, filename, name } = req.body;
+  const fname = filename || name;
+
+  let resolved;
+  try {
+    resolved = await resolveFolderPath(folder, false);
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    throw e;
+  }
+  const fid = resolved.folder_id;
+
+  if (!fname) {
+    if (!fid) return res.status(400).json({ error: 'Nothing to delete: no folder path given' });
+    await deleteFolderCascade(fid);
+    return res.json({ ok: true, deleted: 'folder', folder_id: fid });
+  }
+  const existing = await findFileInFolder(fname, fid);
+  if (!existing) return res.status(404).json({ error: 'File not found' });
+  await db.run('DELETE FROM files WHERE id = ?', [existing.id]);
+  res.json({ ok: true, deleted: 'file', id: existing.id });
 });
 
 app.get('/api/files/:id', async (req, res) => {
@@ -407,3 +582,10 @@ start();
 
 process.on('SIGINT', async () => { await db.close(); process.exit(); });
 process.on('SIGTERM', async () => { await db.close(); process.exit(); });
+
+// A rejected promise inside an async route handler isn't caught by Express 4,
+// so it becomes an unhandled rejection - which crashes the whole process
+// (and every other user's request with it) unless we intercept it here.
+process.on('unhandledRejection', (err) => {
+  console.error('[unhandled rejection]', err);
+});
