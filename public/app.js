@@ -44,7 +44,7 @@
 
   const DEFAULT_MD = `# Welcome to Markdown Live Preview
 
-Write your markdown on the left, see the result on the right — in real time.
+Write your markdown on the left, see the result on the right - in real time.
 
 ## Features
 
@@ -74,7 +74,7 @@ Visit [GitHub](https://github.com) for more info.
 ### Blockquote
 
 > "The best way to predict the future is to invent it."
-> — Alan Kay
+> - Alan Kay
 
 ### Code Block
 
@@ -167,6 +167,14 @@ graph TD
       })).json();
     },
     async deleteTemplate(id) { await fetch('/api/templates/' + id, { method: 'DELETE' }); },
+    async getApiKeys() { return (await fetch('/api/apikeys')).json(); },
+    async createApiKey(name) {
+      return (await fetch('/api/apikeys', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      })).json();
+    },
+    async deleteApiKey(id) { await fetch('/api/apikeys/' + id, { method: 'DELETE' }); },
     async uploadImage(data, filename) {
       return (await fetch('/api/upload', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -789,14 +797,14 @@ graph TD
     return '<svg class="file-item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + (color || 'currentColor') + '" stroke-width="2">' + icon.path + '</svg>';
   }
 
-  function showFileIconMenu(file, x, y) {
+  function showFileContextMenu(file, x, y) {
     $('#file-icon-menu')?.remove();
     const menu = document.createElement('div');
     menu.id = 'file-icon-menu';
     menu.className = 'context-menu';
     menu.style.display = 'block';
     menu.style.left = Math.min(x, window.innerWidth - 190) + 'px';
-    menu.style.top = Math.min(y, window.innerHeight - 280) + 'px';
+    menu.style.top = Math.min(y, window.innerHeight - 360) + 'px';
 
     const iconsHTML = FILE_ICONS.map(ic =>
       '<div class="ctx-icon-swatch' + ((file.icon || 'default') === ic.key ? ' active' : '') + '" data-icon="' + ic.key + '" title="' + ic.name + '">' +
@@ -810,11 +818,22 @@ graph TD
     });
 
     menu.innerHTML =
+      '<button class="context-menu-item" data-action="pin">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>' +
+        (file.is_pinned ? 'Unpin' : 'Pin') + '</button>' +
+      '<button class="context-menu-item" data-action="share">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>' +
+        'Share</button>' +
+      '<div class="context-menu-divider"></div>' +
       '<div class="context-menu-label">Icon</div>' +
       '<div class="ctx-icons-grid">' + iconsHTML + '</div>' +
       '<div class="context-menu-divider"></div>' +
       '<div class="context-menu-label">Color</div>' +
-      '<div class="context-menu-colors">' + colorsHTML + '</div>';
+      '<div class="context-menu-colors">' + colorsHTML + '</div>' +
+      '<div class="context-menu-divider"></div>' +
+      '<button class="context-menu-item context-menu-item-danger" data-action="delete">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>' +
+        'Delete</button>';
     document.body.appendChild(menu);
 
     menu.addEventListener('click', async (e) => {
@@ -837,6 +856,10 @@ graph TD
         renderSidebar();
         return;
       }
+      const action = e.target.closest('[data-action]')?.dataset.action;
+      if (action === 'pin') { menu.remove(); await togglePin(file.id, !file.is_pinned); return; }
+      if (action === 'share') { menu.remove(); shareCurrentFile(file.id); return; }
+      if (action === 'delete') { menu.remove(); deleteFile(file.id); return; }
     });
 
     const closeMenu = (e) => {
@@ -979,10 +1002,11 @@ graph TD
 
   function buildFileEl(f) {
     const el = document.createElement('div'); el.className = 'file-item' + (f.id === activeFileId ? ' active' : ''); el.draggable = true; el.dataset.fileId = f.id;
-    const lockHTML = f.is_shared ? '' : '<span class="file-item-lock" title="Private — not shared"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></span>';
-    el.innerHTML = `${fileIconHTML(f)}<span class="file-item-name">${escapeHtml(f.name || 'Untitled')}</span>${lockHTML}<span class="file-item-pin ${f.is_pinned ? 'pinned' : ''}" data-action="pin" title="Pin"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></span><div class="file-item-actions"><button data-action="delete" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button></div>`;
-    el.addEventListener('click', (e) => { const action = e.target.closest('[data-action]')?.dataset.action; if (action === 'delete') { deleteFile(f.id); e.stopPropagation(); return; } if (action === 'pin') { togglePin(f.id, !f.is_pinned); e.stopPropagation(); return; } switchFile(f.id); });
-    el.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); showFileIconMenu(f, e.clientX, e.clientY); });
+    const lockHTML = f.is_shared ? '' : '<span class="file-item-lock" title="Private - not shared"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></span>';
+    const pinHTML = f.is_pinned ? '<span class="file-item-pin pinned" title="Pinned"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></span>' : '';
+    el.innerHTML = `${fileIconHTML(f)}<span class="file-item-name">${escapeHtml(f.name || 'Untitled')}</span>${lockHTML}${pinHTML}`;
+    el.addEventListener('click', () => switchFile(f.id));
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); showFileContextMenu(f, e.clientX, e.clientY); });
     el.addEventListener('dragstart', (e) => { dragItem = f.id; dragType = 'file'; el.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
     el.addEventListener('dragend', () => { el.classList.remove('dragging'); dragItem = null; dragType = null; });
     el.addEventListener('dragover', (e) => { if (!dragItem || dragType !== 'file' || dragItem === f.id) return; e.preventDefault(); el.classList.add('drag-over'); });
@@ -1069,6 +1093,76 @@ graph TD
     setTimeout(() => document.addEventListener('click', closeMenu), 0);
   }
 
+  // ===== API Keys manager =====
+  async function openApiKeysManager() {
+    const keys = await api.getApiKeys();
+    renderApiKeysManager(keys);
+    modalOverlay.classList.add('show');
+  }
+
+  function formatApiKeyDate(iso) {
+    if (!iso) return 'Never used';
+    const d = new Date(iso);
+    return 'Last used ' + d.toLocaleDateString();
+  }
+
+  function renderApiKeysManager(keys) {
+    modalTitle.textContent = 'API Keys';
+    const listHTML = keys.length
+      ? '<div class="template-list" style="max-height:260px;overflow-y:auto;margin-bottom:12px">' +
+        keys.map(k =>
+          '<div class="file-item" style="cursor:default">' +
+            '<svg class="file-item-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="5"/><line x1="11.5" y1="11.5" x2="21" y2="21"/><line x1="15" y1="15" x2="18" y2="12"/><line x1="18" y1="18" x2="21" y2="15"/></svg>' +
+            '<span class="file-item-name" title="' + escapeHtml(k.name) + '">' + escapeHtml(k.name) +
+              '<span style="color:var(--text-3);font-weight:400;margin-left:6px;font-family:var(--font-mono,monospace);font-size:11px">' + escapeHtml(k.key_prefix) + '…</span>' +
+              '<span style="color:var(--text-3);font-weight:400;margin-left:6px;font-size:11px">' + formatApiKeyDate(k.last_used_at) + '</span>' +
+            '</span>' +
+            '<div class="file-item-actions" style="opacity:1">' +
+              '<button data-action="revoke" data-id="' + k.id + '" title="Revoke"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button>' +
+            '</div>' +
+          '</div>'
+        ).join('') +
+        '</div>'
+      : '<p style="color:var(--text-3);font-size:13px;text-align:center;padding:16px 0">No API keys yet.</p>';
+
+    modalBody.innerHTML = listHTML +
+      '<div style="display:flex;gap:8px;margin-bottom:8px">' +
+        '<input type="text" id="apikey-name-input" class="file-name-input" placeholder="Key name (e.g. Zapier)" style="flex:1">' +
+        '<button class="btn-new-file" id="apikey-create-btn" style="margin:0;width:auto">Create</button>' +
+      '</div>' +
+      '<p class="share-info">Full read/write access to files, folders, and templates. <a href="/docs.html" target="_blank" rel="noopener noreferrer">View API docs</a></p>';
+
+    modalBody.querySelectorAll('[data-action="revoke"]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const k = keys.find(x => x.id === btn.dataset.id);
+        if (!confirm('Revoke API key "' + (k?.name || '') + '"? Any integration using it will stop working.')) return;
+        await api.deleteApiKey(btn.dataset.id);
+        renderApiKeysManager(await api.getApiKeys());
+      });
+    });
+
+    $('#apikey-create-btn').addEventListener('click', async () => {
+      const name = $('#apikey-name-input').value.trim() || 'API Key';
+      showCreatedApiKey(await api.createApiKey(name));
+    });
+    $('#apikey-name-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#apikey-create-btn').click(); });
+  }
+
+  function showCreatedApiKey(created) {
+    modalTitle.textContent = 'API key created';
+    modalBody.innerHTML =
+      '<p style="font-size:13px;color:var(--text-2);margin-bottom:10px">Copy this key now - it won\'t be shown again.</p>' +
+      '<div class="share-url-box" style="margin-bottom:16px">' +
+        '<input type="text" id="apikey-raw-value" value="' + escapeHtml(created.raw_key) + '" readonly style="font-family:var(--font-mono,monospace);font-size:12px">' +
+        '<button id="apikey-copy-btn">Copy</button>' +
+      '</div>' +
+      '<button class="btn-new-file" id="apikey-done-btn" style="margin:0;width:100%">Done</button>';
+    $('#apikey-copy-btn').addEventListener('click', () => {
+      navigator.clipboard.writeText(created.raw_key).then(() => { $('#apikey-copy-btn').textContent = 'Copied!'; setTimeout(() => { $('#apikey-copy-btn').textContent = 'Copy'; }, 2000); });
+    });
+    $('#apikey-done-btn').addEventListener('click', async () => renderApiKeysManager(await api.getApiKeys()));
+  }
+
   // ===== Template manager =====
   async function openTemplateManager() {
     const templates = await api.getTemplates();
@@ -1140,7 +1234,7 @@ graph TD
           input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur(); if (ev.key === 'Escape') { input.value = t.name; input.blur(); } });
           input.addEventListener('blur', commit, { once: true });
         } else if (btn.dataset.action === 'edit') {
-          modalTitle.textContent = 'Edit template — ' + t.name;
+          modalTitle.textContent = 'Edit template - ' + t.name;
           modalBody.innerHTML =
             '<textarea id="template-content-input" spellcheck="false" style="width:100%;min-height:280px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:var(--font-mono, monospace);font-size:12.5px;resize:vertical">' + escapeHtml(t.content) + '</textarea>' +
             '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">' +
@@ -1275,10 +1369,11 @@ graph TD
   }
 
   // ===== Share =====
-  async function shareCurrentFile() {
-    if (!activeFileId) return;
+  async function shareCurrentFile(fileId) {
+    const fid = fileId || activeFileId;
+    if (!fid) return;
 
-    const file = await api.getFile(activeFileId);
+    const file = await api.getFile(fid);
     const hasPublic = !!file.share_id;
     const hasPrivate = !!(file.private_view_token || file.private_edit_token);
 
@@ -1331,11 +1426,11 @@ graph TD
     // Generate public
     if ($('#btn-gen-public')) {
       $('#btn-gen-public').addEventListener('click', async () => {
-        const r = await api.shareFile(activeFileId);
+        const r = await api.shareFile(fid);
         modalOverlay.classList.remove('show');
         showToast('Public link created');
         await loadAll();
-        shareCurrentFile();
+        shareCurrentFile(fid);
       });
     }
 
@@ -1343,11 +1438,11 @@ graph TD
     if ($('#revoke-pub')) {
       $('#revoke-pub').addEventListener('click', async () => {
         if (!confirm('Revoke public link? Anyone with the link will lose access.')) return;
-        await fetch('/api/files/' + activeFileId + '/share', { method: 'DELETE' });
+        await fetch('/api/files/' + fid + '/share', { method: 'DELETE' });
         modalOverlay.classList.remove('show');
         showToast('Public link revoked');
         await loadAll();
-        shareCurrentFile();
+        shareCurrentFile(fid);
       });
     }
 
@@ -1355,11 +1450,11 @@ graph TD
     if ($('#revoke-view')) {
       $('#revoke-view').addEventListener('click', async () => {
         if (!confirm('Revoke private view link?')) return;
-        await fetch('/api/files/' + activeFileId + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'view' }) });
+        await fetch('/api/files/' + fid + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'view' }) });
         modalOverlay.classList.remove('show');
         showToast('View link revoked');
         await loadAll();
-        shareCurrentFile();
+        shareCurrentFile(fid);
       });
     }
 
@@ -1367,11 +1462,11 @@ graph TD
     if ($('#revoke-edit')) {
       $('#revoke-edit').addEventListener('click', async () => {
         if (!confirm('Revoke private edit link?')) return;
-        await fetch('/api/files/' + activeFileId + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'edit' }) });
+        await fetch('/api/files/' + fid + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'edit' }) });
         modalOverlay.classList.remove('show');
         showToast('Edit link revoked');
         await loadAll();
-        shareCurrentFile();
+        shareCurrentFile(fid);
       });
     }
 
@@ -1381,14 +1476,14 @@ graph TD
         const viewPw = $('#share-view-pw')?.value;
         const editPw = $('#share-edit-pw')?.value;
         if (!viewPw && !editPw) { showToast('Enter at least one password'); return; }
-        await fetch('/api/files/' + activeFileId + '/share-private', {
+        await fetch('/api/files/' + fid + '/share-private', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ view_password: viewPw, edit_password: editPw })
         });
         modalOverlay.classList.remove('show');
         showToast('Private links generated');
         await loadAll();
-        shareCurrentFile();
+        shareCurrentFile(fid);
       });
     }
   }
@@ -1486,7 +1581,7 @@ graph TD
     if (mode === 'private-edit') {
       cm.setOption('readOnly', false);
       fileNameInput.readOnly = false;
-      bannerText.textContent = 'Private edit mode — changes are saved';
+      bannerText.textContent = 'Private edit mode - changes are saved';
       forkBtn.style.display = 'none';
 
       cm.on('changes', () => {
@@ -1628,6 +1723,7 @@ graph TD
     $('#btn-new-folder').addEventListener('click', createNewFolder);
     $('#btn-toggle-sidebar').addEventListener('click', () => { sidebar.classList.add('collapsed'); $('#btn-open-sidebar').style.display = 'flex'; });
     $('#btn-open-sidebar').addEventListener('click', () => { sidebar.classList.remove('collapsed'); $('#btn-open-sidebar').style.display = 'none'; });
+    $('#btn-apikeys').addEventListener('click', openApiKeysManager);
     $('#btn-about').addEventListener('click', () => {
       modalTitle.textContent = 'About';
       modalBody.innerHTML = `
@@ -1638,6 +1734,7 @@ graph TD
           <p style="font-size:20px;font-weight:600;color:var(--accent);margin-bottom:16px">v1.0.0</p>
           <div style="font-size:12px;color:var(--text-2);line-height:1.8;text-align:left;border-top:1px solid var(--border);padding-top:12px">
             <p>Self-hosted Markdown editor with live preview, PostgreSQL storage, folder management, and sharing.</p>
+            <p style="margin-top:8px"><a href="/docs.html" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">API documentation</a> - for integrating with third-party tools</p>
             <p style="margin-top:8px">MIT License &copy; 2026 <a href="https://github.com/c2at3" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">c2at3</a></p>
           </div>
         </div>
