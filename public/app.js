@@ -41,6 +41,23 @@
   let isSharedView = false;
   let dragItem = null;
   let dragType = null;
+  let staleBannerShown = false;
+
+  // ===== Loading state for async action buttons =====
+  const SPINNER_SVG = '<svg class="spinner-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="9" opacity="0.25"/><path d="M21 12a9 9 0 00-9-9"/></svg>';
+  async function withLoading(btn, fn) {
+    if (!btn) return fn();
+    const original = btn.innerHTML;
+    const wasDisabled = btn.disabled;
+    btn.innerHTML = SPINNER_SVG;
+    btn.disabled = true;
+    try {
+      return await fn();
+    } finally {
+      btn.innerHTML = original;
+      btn.disabled = wasDisabled;
+    }
+  }
 
   const DEFAULT_MD = `# Welcome to Markdown Live Preview
 
@@ -238,13 +255,27 @@ graph TD
     });
   }
 
+  // preview.innerHTML is fully rebuilt on every keystroke (see render() below),
+  // which would otherwise re-run mermaid's layout engine for every diagram in
+  // the document on every render, even ones nowhere near the edit. Cache the
+  // rendered SVG by diagram source so only a diagram whose own code actually
+  // changed pays that cost again.
+  const mermaidCache = new Map();
+
   async function renderMermaidBlocks() {
     const els = preview.querySelectorAll('.mermaid-placeholder');
     for (const el of els) {
       const code = decodeURIComponent(el.getAttribute('data-mermaid'));
+      const cached = mermaidCache.get(code);
+      if (cached) {
+        el.innerHTML = cached;
+        el.classList.replace('mermaid-placeholder', 'mermaid-rendered');
+        continue;
+      }
       try {
         const id = 'mmd-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5);
         const { svg } = await mermaid.render(id, code);
+        mermaidCache.set(code, svg);
         el.innerHTML = svg;
         el.classList.replace('mermaid-placeholder', 'mermaid-rendered');
       } catch (e) {
@@ -856,8 +887,9 @@ graph TD
         renderSidebar();
         return;
       }
-      const action = e.target.closest('[data-action]')?.dataset.action;
-      if (action === 'pin') { menu.remove(); await togglePin(file.id, !file.is_pinned); return; }
+      const actionBtn = e.target.closest('[data-action]');
+      const action = actionBtn?.dataset.action;
+      if (action === 'pin') { await withLoading(actionBtn, () => togglePin(file.id, !file.is_pinned)); menu.remove(); return; }
       if (action === 'share') { menu.remove(); shareCurrentFile(file.id); return; }
       if (action === 'delete') { menu.remove(); deleteFile(file.id); return; }
     });
@@ -1021,13 +1053,86 @@ graph TD
   }
 
   // ===== File management =====
-  async function switchFile(id) {
+  // fileId -> { name, content, updated_at } for files already opened this
+  // session, so switching back to one is instant instead of a fresh fetch.
+  const fileCache = new Map();
+
+  async function switchFile(id, forceRefresh) {
+    if (id === activeFileId && cm.getValue() && !forceRefresh) return; // already open, nothing to fetch
+
+    // Flush any not-yet-saved edit on the file we're leaving *before*
+    // touching activeFileId or cm's buffer - otherwise a pending debounce
+    // fires later against the wrong (new) file id, or reads content that's
+    // already been replaced, silently dropping the edit.
+    await flushPendingSave();
+
+    // Instant feedback: highlight the clicked row before anything else, so a
+    // click never looks like it did nothing.
+    const prevActiveEl = fileList.querySelector('.file-item.active');
+    if (prevActiveEl) prevActiveEl.classList.remove('active');
+    const rowEl = fileList.querySelector('.file-item[data-file-id="' + id + '"]');
+    if (rowEl) rowEl.classList.add('active');
+
     activeFileId = id;
     localStorage.setItem('md-active-file', id);
+
+    const cached = !forceRefresh && fileCache.get(id);
+    if (cached) {
+      // No network wait for a file we've already opened this session -
+      // apply it immediately, then quietly check in the background whether
+      // it's still current (surfaces via the existing stale-file banner).
+      cm.setValue(cached.content);
+      fileNameInput.value = cached.name;
+      hideStaleBanner();
+      renderSidebar(); render(); showSaveStatus('Loaded');
+      revalidateFileCache(id);
+      return;
+    }
+
+    if (rowEl) rowEl.querySelector('.file-item-icon')?.classList.add('spinner-icon');
+    showSaveStatus('Loading...');
     const file = await api.getFile(id);
+    fileCache.set(id, { name: file.name, content: file.content, updated_at: file.updated_at });
     cm.setValue(file.content);
     fileNameInput.value = file.name;
+    hideStaleBanner();
     renderSidebar(); render(); showSaveStatus('Loaded');
+  }
+
+  async function revalidateFileCache(id) {
+    if (id === activeFileId && staleBannerShown) return; // Reload will fetch fresh anyway
+    try {
+      const file = await api.getFile(id);
+      const cached = fileCache.get(id);
+      if (!cached || file.updated_at === cached.updated_at) return;
+      fileCache.set(id, { name: file.name, content: file.content, updated_at: file.updated_at });
+      // Only the file you're actually looking at is a real conflict - one you
+      // haven't opened just gets its cache refreshed silently, so clicking
+      // into it later shows the new content with nothing to reload.
+      if (id === activeFileId) showStaleBanner();
+    } catch (e) {}
+  }
+
+  // ===== Stale-file detection (edited elsewhere: another tab, or the API) =====
+  function showStaleBanner() {
+    staleBannerShown = true;
+    $('#stale-banner').classList.add('show');
+  }
+  function hideStaleBanner() {
+    staleBannerShown = false;
+    $('#stale-banner').classList.remove('show');
+  }
+  function startStaleCheck() {
+    setInterval(async () => {
+      if (document.hidden || isSharedView) return;
+      // Sweep every file opened this session, not just the active one, so a
+      // file changed elsewhere while you're not looking at it gets its cache
+      // refreshed silently - open it later and it's already current, no
+      // reload needed. The banner only fires for the file you're on right
+      // now, since that's the only case where someone else's change and
+      // yours could actually collide.
+      await Promise.all([...fileCache.keys()].map((id) => revalidateFileCache(id)));
+    }, 8000);
   }
 
   async function createNewFile(folderId, name, content) {
@@ -1133,17 +1238,18 @@ graph TD
       '<p class="share-info">Full read/write access to files, folders, and templates. <a href="/docs.html" target="_blank" rel="noopener noreferrer">View API docs</a></p>';
 
     modalBody.querySelectorAll('[data-action="revoke"]').forEach(btn => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', async (e) => {
         const k = keys.find(x => x.id === btn.dataset.id);
         if (!confirm('Revoke API key "' + (k?.name || '') + '"? Any integration using it will stop working.')) return;
-        await api.deleteApiKey(btn.dataset.id);
+        await withLoading(e.currentTarget, () => api.deleteApiKey(btn.dataset.id));
         renderApiKeysManager(await api.getApiKeys());
       });
     });
 
-    $('#apikey-create-btn').addEventListener('click', async () => {
+    $('#apikey-create-btn').addEventListener('click', async (e) => {
       const name = $('#apikey-name-input').value.trim() || 'API Key';
-      showCreatedApiKey(await api.createApiKey(name));
+      const created = await withLoading(e.currentTarget, () => api.createApiKey(name));
+      showCreatedApiKey(created);
     });
     $('#apikey-name-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#apikey-create-btn').click(); });
   }
@@ -1217,7 +1323,7 @@ graph TD
         if (!t) return;
         if (btn.dataset.action === 'delete') {
           if (!confirm('Delete template "' + t.name + '"?')) return;
-          await api.deleteTemplate(id);
+          await withLoading(btn, () => api.deleteTemplate(id));
           renderTemplateManager(templates.filter(x => x.id !== id));
         } else if (btn.dataset.action === 'rename') {
           const nameEl = btn.closest('.file-item').querySelector('.file-item-name');
@@ -1242,10 +1348,10 @@ graph TD
               '<button class="btn-new-file" id="template-edit-save" style="margin:0;width:auto">Save</button>' +
             '</div>';
           $('#template-edit-back').addEventListener('click', () => renderTemplateManager(templates));
-          $('#template-edit-save').addEventListener('click', async () => {
+          $('#template-edit-save').addEventListener('click', async (e) => {
             const content = $('#template-content-input').value;
             t.content = content;
-            await api.updateTemplate(id, { content });
+            await withLoading(e.currentTarget, () => api.updateTemplate(id, { content }));
             renderTemplateManager(templates);
           });
         }
@@ -1258,6 +1364,7 @@ graph TD
     const f = files.find(x => x.id === id);
     if (!confirm('Delete "' + (f?.name || 'Untitled') + '"?')) return;
     await api.deleteFile(id); files = files.filter(x => x.id !== id);
+    fileCache.delete(id);
     if (id === activeFileId) await switchFile(files[0].id);
     renderSidebar(); showToast('File deleted');
   }
@@ -1270,9 +1377,44 @@ graph TD
   }
 
   // ===== Auto-save =====
+  // Pending edits are captured (file id + value) at schedule time, not read
+  // lazily when the timer fires - if the user switches files before the
+  // debounce elapses, activeFileId and cm's buffer have both already moved
+  // on to the new file, so reading them late would silently drop the edit
+  // (or worse, save the new file's content over itself under the old id).
+  let pendingSaveFileId = null;
+  let pendingContent = null;
+  let pendingName = null;
+
   function scheduleSave() {
+    if (!activeFileId) return;
     clearTimeout(saveTimer); showSaveStatus('Saving...');
-    saveTimer = setTimeout(async () => { if (!activeFileId) return; await api.updateFile(activeFileId, { content: cm.getValue() }); showSaveStatus('Saved'); }, 500);
+    pendingSaveFileId = activeFileId;
+    pendingContent = cm.getValue();
+    saveTimer = setTimeout(flushPendingSave, 500);
+  }
+
+  async function flushPendingSave() {
+    clearTimeout(saveTimer); saveTimer = null;
+    if (!pendingSaveFileId) return;
+    const id = pendingSaveFileId;
+    const patch = {};
+    if (pendingContent !== null) patch.content = pendingContent;
+    if (pendingName !== null) patch.name = pendingName;
+    pendingSaveFileId = null; pendingContent = null; pendingName = null;
+    if (!Object.keys(patch).length) return;
+
+    const updated = await api.updateFile(id, patch);
+    if (updated?.updated_at) {
+      const cached = fileCache.get(id);
+      fileCache.set(id, {
+        name: patch.name !== undefined ? patch.name : (cached?.name ?? updated.name),
+        content: patch.content !== undefined ? patch.content : (cached?.content ?? updated.content),
+        updated_at: updated.updated_at
+      });
+    }
+    if (patch.name !== undefined) { const f = files.find(x => x.id === id); if (f) { f.name = patch.name; renderSidebar(); } }
+    showSaveStatus('Saved');
   }
   function showSaveStatus(text) {
     const el = $('#stat-save');
@@ -1365,6 +1507,7 @@ graph TD
     $('#hljs-light').disabled = dark;
     $('#hljs-dark').disabled = !dark;
     initMermaid();
+    mermaidCache.clear(); // cached SVGs have the old theme's colors baked in
     if (cm.getValue()) render();
   }
 
@@ -1425,9 +1568,8 @@ graph TD
 
     // Generate public
     if ($('#btn-gen-public')) {
-      $('#btn-gen-public').addEventListener('click', async () => {
-        const r = await api.shareFile(fid);
-        modalOverlay.classList.remove('show');
+      $('#btn-gen-public').addEventListener('click', async (e) => {
+        await withLoading(e.currentTarget, () => api.shareFile(fid));
         showToast('Public link created');
         await loadAll();
         shareCurrentFile(fid);
@@ -1436,10 +1578,9 @@ graph TD
 
     // Revoke public
     if ($('#revoke-pub')) {
-      $('#revoke-pub').addEventListener('click', async () => {
+      $('#revoke-pub').addEventListener('click', async (e) => {
         if (!confirm('Revoke public link? Anyone with the link will lose access.')) return;
-        await fetch('/api/files/' + fid + '/share', { method: 'DELETE' });
-        modalOverlay.classList.remove('show');
+        await withLoading(e.currentTarget, () => fetch('/api/files/' + fid + '/share', { method: 'DELETE' }));
         showToast('Public link revoked');
         await loadAll();
         shareCurrentFile(fid);
@@ -1448,10 +1589,9 @@ graph TD
 
     // Revoke private view
     if ($('#revoke-view')) {
-      $('#revoke-view').addEventListener('click', async () => {
+      $('#revoke-view').addEventListener('click', async (e) => {
         if (!confirm('Revoke private view link?')) return;
-        await fetch('/api/files/' + fid + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'view' }) });
-        modalOverlay.classList.remove('show');
+        await withLoading(e.currentTarget, () => fetch('/api/files/' + fid + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'view' }) }));
         showToast('View link revoked');
         await loadAll();
         shareCurrentFile(fid);
@@ -1460,10 +1600,9 @@ graph TD
 
     // Revoke private edit
     if ($('#revoke-edit')) {
-      $('#revoke-edit').addEventListener('click', async () => {
+      $('#revoke-edit').addEventListener('click', async (e) => {
         if (!confirm('Revoke private edit link?')) return;
-        await fetch('/api/files/' + fid + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'edit' }) });
-        modalOverlay.classList.remove('show');
+        await withLoading(e.currentTarget, () => fetch('/api/files/' + fid + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'edit' }) }));
         showToast('Edit link revoked');
         await loadAll();
         shareCurrentFile(fid);
@@ -1472,15 +1611,14 @@ graph TD
 
     // Generate private
     if ($('#btn-gen-private')) {
-      $('#btn-gen-private').addEventListener('click', async () => {
+      $('#btn-gen-private').addEventListener('click', async (e) => {
         const viewPw = $('#share-view-pw')?.value;
         const editPw = $('#share-edit-pw')?.value;
         if (!viewPw && !editPw) { showToast('Enter at least one password'); return; }
-        await fetch('/api/files/' + fid + '/share-private', {
+        await withLoading(e.currentTarget, () => fetch('/api/files/' + fid + '/share-private', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ view_password: viewPw, edit_password: editPw })
-        });
-        modalOverlay.classList.remove('show');
+        }));
         showToast('Private links generated');
         await loadAll();
         shareCurrentFile(fid);
@@ -1689,13 +1827,30 @@ graph TD
     setupDivider();
     setupImageUpload();
 
-    cm.on('changes', () => { scheduleRender(); scheduleSave(); });
+    cm.on('changes', (instance, changes) => {
+      // setValue() (switchFile loading a file, cached or fresh) fires this
+      // same event. Autosaving on that would write the just-loaded content
+      // straight back to the server - clobbering anything newer there with
+      // whatever we happened to have loaded (e.g. a stale cache entry).
+      if (changes.some((c) => c.origin === 'setValue')) return;
+      scheduleRender(); scheduleSave();
+    });
     cm.on('cursorActivity', updateCursor);
 
     fileNameInput.addEventListener('input', () => {
-      if (!activeFileId) return; clearTimeout(saveTimer);
-      saveTimer = setTimeout(async () => { await api.updateFile(activeFileId, { name: fileNameInput.value }); const f = files.find(x => x.id === activeFileId); if (f) f.name = fileNameInput.value; renderSidebar(); showSaveStatus('Saved'); }, 400);
+      if (!activeFileId) return;
+      clearTimeout(saveTimer); showSaveStatus('Saving...');
+      pendingSaveFileId = activeFileId;
+      pendingName = fileNameInput.value;
+      saveTimer = setTimeout(flushPendingSave, 400);
     });
+
+    $('#stale-reload').addEventListener('click', async (e) => {
+      await withLoading(e.currentTarget, () => switchFile(activeFileId, true));
+      showToast('Reloaded');
+    });
+    $('#stale-dismiss').addEventListener('click', hideStaleBanner);
+    startStaleCheck();
 
     $('#btn-new-file').addEventListener('click', showNewFileMenu);
     $('#btn-save-template').addEventListener('click', () => {
@@ -1714,8 +1869,8 @@ graph TD
       const input = $('#template-name-input');
       input.focus(); input.select();
       $('#template-cancel').addEventListener('click', () => modalOverlay.classList.remove('show'));
-      $('#template-save').addEventListener('click', async () => {
-        await api.createTemplate(input.value.trim() || 'Untitled', cm.getValue());
+      $('#template-save').addEventListener('click', async (e) => {
+        await withLoading(e.currentTarget, () => api.createTemplate(input.value.trim() || 'Untitled', cm.getValue()));
         modalOverlay.classList.remove('show');
         showToast('Saved as template');
       });
