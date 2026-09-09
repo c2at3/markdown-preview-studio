@@ -203,6 +203,12 @@ graph TD
   // ===== Marked config =====
   const renderer = new marked.Renderer();
 
+  // Wrap is one global preference, not a per-block toggle: turning it on
+  // anywhere applies it to every code block (current ones immediately, and
+  // any added later since renderer.code reads this on every render), and it
+  // survives reloads the same way dark mode / font size do.
+  let codeWrapEnabled = localStorage.getItem('md-code-wrap') === '1';
+
   renderer.code = function (code, language) {
     if (typeof code === 'object') { language = code.lang; code = code.text; }
     if (language === 'mermaid') {
@@ -214,7 +220,16 @@ graph TD
     } else {
       try { highlighted = hljs.highlightAuto(code).value; } catch (e) {}
     }
-    return '<pre><code class="hljs language-' + (language || '') + '">' + highlighted + '</code></pre>';
+    return '<div class="code-block-wrapper' + (codeWrapEnabled ? ' wrapped' : '') + '" data-code="' + encodeURIComponent(code) + '">' +
+      '<div class="code-block-toolbar">' +
+        '<span class="code-block-lang">' + escapeHtml(language || 'text') + '</span>' +
+        '<div class="code-block-actions">' +
+          '<button type="button" class="code-wrap-btn' + (codeWrapEnabled ? ' active' : '') + '" title="Wrap long lines"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="15" y2="18"/><path d="M12 15l3 3-3 3"/></svg></button>' +
+          '<button type="button" class="code-copy-btn" title="Copy code"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>' +
+        '</div>' +
+      '</div>' +
+      '<pre><code class="hljs language-' + (language || '') + '">' + highlighted + '</code></pre>' +
+    '</div>';
   };
 
   renderer.checkbox = function (checked) {
@@ -297,8 +312,8 @@ graph TD
   function render() {
     isRendering = true;
     preview.innerHTML = DOMPurify.sanitize(marked.parse(cm.getValue()), {
-      ADD_TAGS: ['input'],
-      ADD_ATTR: ['target', 'checked', 'disabled', 'data-mermaid']
+      ADD_TAGS: ['input', 'button'],
+      ADD_ATTR: ['target', 'checked', 'disabled', 'data-mermaid', 'data-code', 'type']
     });
     preview.querySelectorAll('a').forEach(a => {
       a.setAttribute('target', '_blank');
@@ -547,13 +562,38 @@ graph TD
   }
 
   preview.addEventListener('click', (e) => {
-    const btn = e.target.closest('.media-zoom-btn'); if (!btn) return;
-    e.preventDefault(); e.stopPropagation();
-    const wrapper = btn.closest('.media-wrapper');
-    const img = wrapper?.querySelector('img');
-    const svg = wrapper?.querySelector('.mermaid-rendered svg');
-    if (img) openLightbox(img.src, img.alt);
-    else if (svg) openLightbox(svg, 'Mermaid Diagram');
+    const zoomBtn = e.target.closest('.media-zoom-btn');
+    if (zoomBtn) {
+      e.preventDefault(); e.stopPropagation();
+      const wrapper = zoomBtn.closest('.media-wrapper');
+      const img = wrapper?.querySelector('img');
+      const svg = wrapper?.querySelector('.mermaid-rendered svg');
+      if (img) openLightbox(img.src, img.alt);
+      else if (svg) openLightbox(svg, 'Mermaid Diagram');
+      return;
+    }
+
+    const wrapBtn = e.target.closest('.code-wrap-btn');
+    if (wrapBtn) {
+      codeWrapEnabled = !codeWrapEnabled;
+      localStorage.setItem('md-code-wrap', codeWrapEnabled ? '1' : '0');
+      preview.querySelectorAll('.code-block-wrapper').forEach((block) => {
+        block.classList.toggle('wrapped', codeWrapEnabled);
+        block.querySelector('.code-wrap-btn')?.classList.toggle('active', codeWrapEnabled);
+      });
+      return;
+    }
+
+    const copyBtn = e.target.closest('.code-copy-btn');
+    if (copyBtn) {
+      const block = copyBtn.closest('.code-block-wrapper');
+      const code = decodeURIComponent(block.dataset.code || '');
+      navigator.clipboard.writeText(code).then(() => {
+        copyBtn.classList.add('copied');
+        setTimeout(() => copyBtn.classList.remove('copied'), 1500);
+      });
+      return;
+    }
   });
 
   // ===== Font controls =====
@@ -988,7 +1028,12 @@ graph TD
     rootFolders.forEach(folder => fileList.appendChild(buildFolderEl(folder)));
     rootFiles.forEach(f => fileList.appendChild(buildFileEl(f)));
     fileList.addEventListener('dragover', (e) => { if (!dragItem) return; e.preventDefault(); });
-    fileList.addEventListener('drop', async (e) => { e.preventDefault(); fileList.classList.remove('drag-over-root'); if (dragType === 'file' && dragItem) { await api.updateFile(dragItem, { folder_id: null }); await loadAll(); } });
+    fileList.addEventListener('drop', async (e) => {
+      e.preventDefault(); fileList.classList.remove('drag-over-root');
+      if (!dragItem) return;
+      if (dragType === 'file') { await api.updateFile(dragItem, { folder_id: null }); await loadAll(); }
+      else if (dragType === 'folder') { await api.updateFolder(dragItem, { parent_id: null }); await loadAll(); }
+    });
   }
 
   function buildFolderEl(folder) {
@@ -1022,9 +1067,38 @@ graph TD
     });
     header.addEventListener('dragstart', (e) => { dragItem = folder.id; dragType = 'folder'; header.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
     header.addEventListener('dragend', () => { header.classList.remove('dragging'); dragItem = null; dragType = null; });
-    header.addEventListener('dragover', (e) => { if (!dragItem || (dragType === 'folder' && dragItem === folder.id)) return; e.preventDefault(); header.classList.add('drag-over'); });
-    header.addEventListener('dragleave', () => header.classList.remove('drag-over'));
-    header.addEventListener('drop', async (e) => { e.preventDefault(); e.stopPropagation(); header.classList.remove('drag-over'); if (dragType === 'file') { await api.updateFile(dragItem, { folder_id: folder.id }); await loadAll(); } else if (dragType === 'folder' && dragItem !== folder.id) { await api.updateFolder(dragItem, { parent_id: folder.id }); await loadAll(); } });
+    header.addEventListener('dragover', (e) => {
+      if (!dragItem || (dragType === 'folder' && dragItem === folder.id)) return;
+      e.preventDefault();
+      header.classList.remove('drag-over', 'drag-over-top', 'drag-over-bottom');
+      if (dragType === 'folder') {
+        // Dropping near the top/bottom edge reorders as a sibling there;
+        // dropping over the middle nests it inside this folder instead.
+        const rect = header.getBoundingClientRect();
+        const offset = (e.clientY - rect.top) / rect.height;
+        if (offset < 0.25) header.classList.add('drag-over-top');
+        else if (offset > 0.75) header.classList.add('drag-over-bottom');
+        else header.classList.add('drag-over');
+      } else {
+        header.classList.add('drag-over');
+      }
+    });
+    header.addEventListener('dragleave', () => header.classList.remove('drag-over', 'drag-over-top', 'drag-over-bottom'));
+    header.addEventListener('drop', async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const insertBefore = header.classList.contains('drag-over-top');
+      const insertAfter = header.classList.contains('drag-over-bottom');
+      header.classList.remove('drag-over', 'drag-over-top', 'drag-over-bottom');
+      if (dragType === 'file') { await api.updateFile(dragItem, { folder_id: folder.id }); await loadAll(); }
+      else if (dragType === 'folder' && dragItem !== folder.id) {
+        if (insertBefore || insertAfter) {
+          await api.updateFolder(dragItem, { parent_id: folder.parent_id || null, sort_order: folder.sort_order + (insertAfter ? 1 : 0) });
+        } else {
+          await api.updateFolder(dragItem, { parent_id: folder.id });
+        }
+        await loadAll();
+      }
+    });
     el.appendChild(header);
     const children = document.createElement('div'); children.className = 'folder-children' + (folder.collapsed ? ' hidden' : '');
     childFolders.forEach(cf => children.appendChild(buildFolderEl(cf)));

@@ -199,6 +199,12 @@ body {
 .file-item.drag-over {
   border-top: 2px solid var(--accent);
 }
+.folder-header.drag-over-top {
+  box-shadow: inset 0 2px 0 0 var(--accent);
+}
+.folder-header.drag-over-bottom {
+  box-shadow: inset 0 -2px 0 0 var(--accent);
+}
 .folder-header.drag-over {
   background: var(--accent-soft);
   outline: 2px dashed var(--accent);
@@ -936,14 +942,67 @@ body.dark .cm-attribute { color: #ffcb6b; }
   font-size: 0.88em;
 }
 
-.markdown-body pre {
-  background: var(--code-bg);
-  padding: 14px 18px;
-  border-radius: var(--radius);
-  overflow-x: auto;
+.code-block-wrapper {
   margin-bottom: 14px;
   border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
+.code-block-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border-light);
+}
+.code-block-lang {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.code-block-actions { display: flex; gap: 2px; }
+.code-block-actions button {
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 4px 5px;
+  color: var(--text-3);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.1s, background 0.1s;
+}
+.code-block-actions button:hover { background: var(--bg-hover); color: var(--text); }
+.code-block-actions .code-wrap-btn.active { color: var(--accent); }
+.code-block-actions .code-copy-btn.copied { color: var(--success); }
+
+.markdown-body .code-block-wrapper pre {
+  background: var(--code-bg);
+  padding: 10px 14px;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  overflow-x: auto;
+  /* keep the horizontal scrollbar thin and flush against the code, not a
+     separate strip of empty space below it */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.markdown-body .code-block-wrapper pre::-webkit-scrollbar { height: 6px; }
+.markdown-body .code-block-wrapper pre::-webkit-scrollbar-track { background: transparent; }
+.markdown-body .code-block-wrapper pre::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.markdown-body .code-block-wrapper pre::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+
+.code-block-wrapper.wrapped pre { overflow-x: hidden; }
+.code-block-wrapper.wrapped pre code {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
 .markdown-body pre code {
   background: none;
   padding: 0;
