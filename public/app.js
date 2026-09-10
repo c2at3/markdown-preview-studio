@@ -1567,9 +1567,70 @@ graph TD
   function setupDivider() {
     const divider = $('#divider'), container = $('.editor-container'), editorPane = $('#editor-pane'), previewPane = $('#preview-pane');
     let dragging = false;
-    divider.addEventListener('mousedown', (e) => { dragging = true; divider.classList.add('dragging'); document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'; e.preventDefault(); });
-    document.addEventListener('mousemove', (e) => { if (!dragging) return; const rect = container.getBoundingClientRect(); const pct = Math.max(20, Math.min(80, ((e.clientX - rect.left) / rect.width) * 100)); editorPane.style.flex = 'none'; previewPane.style.flex = 'none'; editorPane.style.width = pct + '%'; previewPane.style.width = (100 - pct) + '%'; cm.refresh(); });
+    divider.addEventListener('mousedown', (e) => { dragging = true; divider.classList.add('dragging'); document.body.style.cursor = layoutMode === 'split-h' ? 'row-resize' : 'col-resize'; document.body.style.userSelect = 'none'; e.preventDefault(); });
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const rect = container.getBoundingClientRect();
+      editorPane.style.flex = 'none'; previewPane.style.flex = 'none';
+      if (layoutMode === 'split-h') {
+        const pct = Math.max(20, Math.min(80, ((e.clientY - rect.top) / rect.height) * 100));
+        editorPane.style.height = pct + '%'; previewPane.style.height = (100 - pct) + '%';
+      } else {
+        const pct = Math.max(20, Math.min(80, ((e.clientX - rect.left) / rect.width) * 100));
+        editorPane.style.width = pct + '%'; previewPane.style.width = (100 - pct) + '%';
+      }
+      cm.refresh();
+    });
     document.addEventListener('mouseup', () => { if (!dragging) return; dragging = false; divider.classList.remove('dragging'); document.body.style.cursor = ''; document.body.style.userSelect = ''; cm.refresh(); });
+  }
+
+  // ===== Layout mode (split-v / split-h / full) =====
+  let layoutMode = localStorage.getItem('md-layout-mode') || 'split-v';
+  let fullView = localStorage.getItem('md-layout-full-view') || 'editor';
+
+  const LAYOUT_ICONS = {
+    'split-v': '<rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="16" rx="1"/>',
+    'split-h': '<rect x="3" y="4" width="18" height="7" rx="1"/><rect x="3" y="13" width="18" height="7" rx="1"/>',
+    'full': '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>'
+  };
+
+  function applyLayoutMode(mode) {
+    layoutMode = mode;
+    localStorage.setItem('md-layout-mode', mode);
+    const container = $('.editor-container'), editorPane = $('#editor-pane'), previewPane = $('#preview-pane');
+
+    // Bỏ kích thước kéo tay từ chế độ trước để mỗi lần chuyển layout đều bắt đầu ở tỉ lệ 50/50
+    editorPane.style.flex = ''; editorPane.style.width = ''; editorPane.style.height = '';
+    previewPane.style.flex = ''; previewPane.style.width = ''; previewPane.style.height = '';
+
+    container.classList.toggle('layout-stacked', mode === 'split-h');
+    container.classList.toggle('layout-full', mode === 'full');
+
+    $('#layout-main-icon').innerHTML = LAYOUT_ICONS[mode];
+    $$('.layout-option[data-mode]').forEach((btn) => btn.classList.toggle('active', btn.dataset.mode === mode));
+    $('#layout-view-row').style.display = mode === 'full' ? 'flex' : 'none';
+    $('#layout-view-divider').style.display = mode === 'full' ? 'block' : 'none';
+
+    if (mode === 'full') applyFullView(fullView);
+
+    requestAnimationFrame(() => cm.refresh());
+  }
+
+  function applyFullView(view) {
+    fullView = view;
+    localStorage.setItem('md-layout-full-view', view);
+    $('#editor-pane').classList.toggle('full-visible', view === 'editor');
+    $('#preview-pane').classList.toggle('full-visible', view === 'preview');
+    $('#full-view-btn-editor').classList.toggle('active', view === 'editor');
+    $('#full-view-btn-preview').classList.toggle('active', view === 'preview');
+    requestAnimationFrame(() => cm.refresh());
+  }
+
+  function setupLayoutSwitch() {
+    $$('.layout-option[data-mode]').forEach((btn) => btn.addEventListener('click', () => applyLayoutMode(btn.dataset.mode)));
+    $('#full-view-btn-editor').addEventListener('click', () => applyFullView('editor'));
+    $('#full-view-btn-preview').addEventListener('click', () => applyFullView('preview'));
+    applyLayoutMode(layoutMode);
   }
 
   // ===== Dark mode =====
@@ -1899,6 +1960,7 @@ graph TD
 
     setupSyncScroll();
     setupDivider();
+    setupLayoutSwitch();
     setupImageUpload();
 
     cm.on('changes', (instance, changes) => {

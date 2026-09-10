@@ -483,6 +483,8 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
 .tool-btn:hover { background: var(--bg-hover); color: var(--text); border-color: var(--border); }
 .tool-btn.accent { color: var(--accent); }
 .tool-btn.accent:hover { background: var(--accent-soft); border-color: var(--accent); }
+.tool-btn.active { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
+.tool-btn.active:hover { background: var(--accent-soft); border-color: var(--accent); }
 
 .sync-toggle {
   display: flex;
@@ -502,6 +504,100 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
 .sync-toggle input { display: none; }
 .sync-label { white-space: nowrap; }
 
+/* ===== LAYOUT CONTROL (nút bố cục, hover hiện dropdown) ===== */
+.layout-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.layout-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  /* Không để khoảng trống giữa nút và dropdown - nếu có gap, di chuột xuống
+     dropdown sẽ thoát khỏi vùng :hover của .layout-control giữa chừng và
+     đóng dropdown trước khi chuột tới nơi (đã gặp lỗi này khi test). */
+  margin-top: -1px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 172px;
+  z-index: 20;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+}
+.layout-control:hover .layout-dropdown,
+.layout-control:focus-within .layout-dropdown {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+.layout-dropdown-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 8px 2px;
+}
+.layout-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: left;
+  font-family: var(--font-sans);
+  transition: background 0.1s, color 0.1s;
+}
+.layout-option:hover { background: var(--bg-hover); color: var(--text); }
+.layout-option.active { color: var(--accent); background: var(--accent-soft); }
+.layout-dropdown-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 2px;
+}
+.layout-view-row {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-alt);
+  border-radius: var(--radius-sm);
+}
+.layout-view-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 6px;
+  background: none;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 1px);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: background 0.1s, color 0.1s;
+}
+.layout-view-btn:hover { background: var(--bg-hover); color: var(--text); }
+.layout-view-btn.active { color: var(--accent); background: var(--surface); box-shadow: var(--shadow-sm); }
+
 /* ===== EDITOR CONTAINER ===== */
 .editor-container {
   display: flex;
@@ -517,6 +613,30 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+/* Chia đôi ngang: editor trên, preview dưới (hoặc ngược lại), chia bởi thanh kéo nằm ngang */
+.editor-container.layout-stacked {
+  flex-direction: column;
+}
+.editor-container.layout-stacked .divider {
+  width: 100%;
+  height: 1px;
+  cursor: row-resize;
+}
+
+/* Toàn màn hình: chỉ 1 pane hiển thị, chuyển đổi bằng nút viết/xem trước */
+.editor-container.layout-full .pane {
+  display: none;
+}
+.editor-container.layout-full .pane.full-visible {
+  display: flex;
+  flex: 1 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+.editor-container.layout-full .divider {
+  display: none;
 }
 
 /* ===== FIND/REPLACE PANEL ===== */
