@@ -2083,7 +2083,7 @@ graph TD
     $('#btn-copy-md').addEventListener('click', () => navigator.clipboard.writeText(cm.getValue()).then(() => showToast('Markdown copied')));
     $('#btn-copy-html').addEventListener('click', () => navigator.clipboard.writeText(preview.innerHTML).then(() => showToast('HTML copied')));
     $('#btn-find').addEventListener('click', () => toggleFindPanel());
-    $('#btn-share').addEventListener('click', shareCurrentFile);
+    $('#btn-share').addEventListener('click', () => shareCurrentFile());
     $('#btn-export').addEventListener('click', exportPDF);
     $('#toggle-dark').addEventListener('change', () => applyDark($('#toggle-dark').checked));
 
