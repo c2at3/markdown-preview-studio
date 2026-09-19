@@ -124,12 +124,15 @@ app.use('/api', async (req, res, next) => {
   if (bearerMatch) {
     const key = await auth.validateApiKey(bearerMatch[1].trim());
     if (!key) return res.status(401).json({ error: 'Invalid API key' });
-    // API keys (third-party integrations) may only call this one endpoint.
-    // Everything else - files, folders, templates, sharing, apikeys - stays
-    // reachable only via a logged-in session (the app's own web UI).
-    const isUploadCall = apiPath === '/files/upload' && (req.method === 'POST' || req.method === 'DELETE');
-    if (!isUploadCall) {
-      return res.status(403).json({ error: 'This API key can only be used with POST/DELETE /api/files/upload' });
+    // API keys (third-party integrations) may only call these three
+    // endpoints. Everything else - folders, templates, sharing, apikeys -
+    // stays reachable only via a logged-in session (the app's own web UI).
+    const isAllowedCall =
+      (apiPath === '/files/upload' && (req.method === 'POST' || req.method === 'DELETE')) ||
+      (apiPath === '/files/list' && req.method === 'GET') ||
+      (apiPath === '/files/view' && req.method === 'GET');
+    if (!isAllowedCall) {
+      return res.status(403).json({ error: 'This API key can only be used with POST/DELETE /api/files/upload, GET /api/files/list, or GET /api/files/view' });
     }
     req.user = { id: 'api:' + key.id, username: key.name, role: 'admin' };
     req.apiKey = key;
@@ -283,14 +286,24 @@ async function findFileInFolder(fname, folderId) {
     : db.get('SELECT id FROM files WHERE name = ? AND folder_id IS NULL', [fname]);
 }
 
+// Deletes a folder and its entire subtree (any depth), moving every file
+// anywhere in it to root rather than deleting them - matches the confirm
+// dialog's plain "Delete folder?" wording, which warns about the folder,
+// not its contents. Previously this only walked one level of children, so
+// a folder nested two or more levels deep never got collected/deleted and
+// files inside it were never re-parented.
 async function deleteFolderCascade(id) {
-  await db.run('UPDATE files SET folder_id = NULL WHERE folder_id = ?', [id]);
-  const children = await db.query('SELECT id FROM folders WHERE parent_id = ?', [id]);
-  for (const c of children) {
-    await db.run('UPDATE files SET folder_id = NULL WHERE folder_id = ?', [c.id]);
-    await db.run('DELETE FROM folders WHERE id = ?', [c.id]);
+  const subtreeIds = [id];
+  for (let i = 0; i < subtreeIds.length; i++) {
+    const children = await db.query('SELECT id FROM folders WHERE parent_id = ?', [subtreeIds[i]]);
+    for (const c of children) subtreeIds.push(c.id);
   }
-  await db.run('DELETE FROM folders WHERE id = ?', [id]);
+  for (const fid of subtreeIds) {
+    await db.run('UPDATE files SET folder_id = NULL WHERE folder_id = ?', [fid]);
+  }
+  for (let i = subtreeIds.length - 1; i >= 0; i--) {
+    await db.run('DELETE FROM folders WHERE id = ?', [subtreeIds[i]]);
+  }
 }
 
 const COLOR_NAMES = {
@@ -394,6 +407,80 @@ app.delete('/api/files/upload', async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'File not found' });
   await db.run('DELETE FROM files WHERE id = ?', [existing.id]);
   res.json({ ok: true, deleted: 'file', id: existing.id });
+});
+
+// Fetches all folders and builds an id -> full "Parent/Child" path map - the
+// mirror image of resolveFolderPath (path -> id) - so list/view can describe
+// where a file lives in the same human-readable form upload accepts.
+async function buildFolderPathMap() {
+  const folders = await db.query('SELECT id, name, parent_id FROM folders');
+  const byId = new Map(folders.map(f => [f.id, f]));
+  const cache = new Map();
+  function pathOf(id) {
+    if (!id) return null;
+    if (cache.has(id)) return cache.get(id);
+    const f = byId.get(id);
+    if (!f) return null;
+    const parentPath = pathOf(f.parent_id);
+    const full = parentPath ? parentPath + '/' + f.name : f.name;
+    cache.set(id, full);
+    return full;
+  }
+  return { folders, pathOf };
+}
+
+// Lists everything currently stored - every folder (with its full path) and
+// every file (with the folder path it lives in, but not its content) - so a
+// third-party integration can see what already exists before deciding what
+// to create or update via POST /api/files/upload.
+app.get('/api/files/list', async (req, res) => {
+  const { folders, pathOf } = await buildFolderPathMap();
+  const files = await db.query('SELECT id, name, folder_id, icon, icon_color, share_id, created_at, updated_at FROM files ORDER BY name');
+  res.json({
+    folders: folders.map(f => ({ id: f.id, name: f.name, path: pathOf(f.id) })),
+    files: files.map(f => ({
+      id: f.id,
+      name: f.name,
+      folder: pathOf(f.folder_id),
+      icon: f.icon,
+      icon_color: f.icon_color,
+      is_shared: !!f.share_id,
+      created_at: f.created_at,
+      updated_at: f.updated_at
+    }))
+  });
+});
+
+// Reads one file's content, addressed the same way as upload: a
+// human-readable folder path + filename instead of an internal id.
+app.get('/api/files/view', async (req, res) => {
+  const { folder, filename, name } = req.query;
+  const fname = filename || name;
+  if (!fname) return res.status(400).json({ error: 'filename is required' });
+
+  let resolved;
+  try {
+    resolved = await resolveFolderPath(folder, false);
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    throw e;
+  }
+  const existing = await findFileInFolder(fname, resolved.folder_id);
+  if (!existing) return res.status(404).json({ error: 'File not found' });
+
+  const file = await db.get('SELECT id, name, content, folder_id, icon, icon_color, share_id, created_at, updated_at FROM files WHERE id = ?', [existing.id]);
+  const { pathOf } = await buildFolderPathMap();
+  res.json({
+    id: file.id,
+    name: file.name,
+    folder: pathOf(file.folder_id),
+    content: file.content,
+    icon: file.icon,
+    icon_color: file.icon_color,
+    is_shared: !!file.share_id,
+    created_at: file.created_at,
+    updated_at: file.updated_at
+  });
 });
 
 app.get('/api/files/:id', async (req, res) => {
