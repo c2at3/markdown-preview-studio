@@ -28,6 +28,7 @@
   .method { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; font-family: var(--font-mono); letter-spacing: 0.3px; }
   .method.post { background: #ecfdf5; color: #059669; }
   body.dark .method.post { background: #052e21; color: #34d399; }
+  .method.get { background: var(--accent-soft); color: var(--accent); }
   .method.delete { background: var(--danger-soft); color: var(--danger); }
   .endpoint-path { font-family: var(--font-mono); font-size: 13px; font-weight: 600; }
   .endpoint-desc { font-size: 13px; color: var(--text-2); margin-bottom: 10px; line-height: 1.6; }
@@ -58,12 +59,14 @@
   <div class="docs-header">
     <a class="back" href="/"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Back to app</a>
     <h1>API Documentation</h1>
-    <p>A single endpoint for third-party tools to create, update, and delete notes in Markdown Preview Studio.</p>
+    <p>A small set of endpoints for third-party tools to create, update, delete, list, and read notes in Markdown Preview Studio.</p>
   </div>
 
   <div class="docs-nav">
     <a href="#auth">Authentication</a>
-    <a href="#endpoint">The endpoint</a>
+    <a href="#endpoints">Create, update &amp; delete</a>
+    <a href="#list">List everything</a>
+    <a href="#view">Read a file</a>
     <a href="#icons">Icons &amp; colors</a>
     <a href="#errors">Errors</a>
   </div>
@@ -75,11 +78,11 @@
       <pre><code>Authorization: Bearer mdpk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</code></pre>
     </div>
     <div class="warn-box">The full key is shown only once, right after creation. If you lose it, revoke it and create a new one - there is no way to recover a lost key.</div>
-    <div class="note-box">An API key can only call the one endpoint documented on this page. Everything else in the app (browsing the sidebar, sharing, templates, managing keys) is only available to a logged-in session - an API key can't touch it.</div>
+    <div class="note-box">An API key can only call the endpoints documented on this page. Everything else in the app (browsing the sidebar, sharing, templates, managing keys) is only available to a logged-in session - an API key can't touch it.</div>
   </section>
 
-  <section class="docs-section" id="endpoint">
-    <h2>The endpoint</h2>
+  <section class="docs-section" id="endpoints">
+    <h2>Create, update &amp; delete</h2>
     <p>Addresses a file by a human-readable <strong>folder path + filename</strong> instead of database ids. <code>POST</code> creates it, or overwrites it in place (same id, no duplicate) if one already exists there. <code>DELETE</code> removes it.</p>
 
     <h3>Create or update</h3>
@@ -117,13 +120,55 @@
     </div>
 
     <h3>Delete a folder</h3>
-    <p class="endpoint-desc">Same call without <code>filename</code> - deletes only the last folder in the path (not its parents). Files and sub-folders inside it are moved to root, not deleted, matching the app's own "delete folder" behavior.</p>
+    <p class="endpoint-desc">Same call without <code>filename</code> - deletes only the last folder in the path (not its parents). Sub-folders inside it (at any depth) are deleted too, but files are never deleted this way - they're moved to root, matching the app's own "delete folder" behavior.</p>
     <div class="code-block">
       <pre><code id="ex-delete-folder"></code></pre>
       <button class="copy-btn" data-example="deleteFolder">Copy</button>
     </div>
     <div class="code-block">
       <pre><code>{ "ok": true, "deleted": "folder", "folder_id": "..." }</code></pre>
+    </div>
+  </section>
+
+  <section class="docs-section" id="list">
+    <h2>List everything</h2>
+    <p class="endpoint-desc">Returns every folder (with its full path) and every file (with the folder path it lives in, but not its content) - use this to see what already exists before deciding what to create or update.</p>
+    <div class="endpoint-head"><span class="method get">GET</span><span class="endpoint-path">/api/files/list</span></div>
+    <div class="code-block">
+      <pre><code id="ex-list"></code></pre>
+      <button class="copy-btn" data-example="list">Copy</button>
+    </div>
+    <p class="endpoint-desc">Response:</p>
+    <div class="code-block">
+      <pre><code>{
+  "folders": [ { "id": "...", "name": "Bug bounty", "path": "TEST/Bug bounty" } ],
+  "files": [
+    { "id": "...", "name": "Report 001 - XSS", "folder": "TEST/Bug bounty",
+      "icon": "bug", "icon_color": "#ef4444", "is_shared": false,
+      "created_at": "...", "updated_at": "..." }
+  ]
+}</code></pre>
+    </div>
+  </section>
+
+  <section class="docs-section" id="view">
+    <h2>Read a file</h2>
+    <p class="endpoint-desc">Same <code>folder</code> + <code>filename</code> addressing as above, passed as query parameters instead of a JSON body - this is the only way to read a note's content through the API.</p>
+    <div class="endpoint-head"><span class="method get">GET</span><span class="endpoint-path">/api/files/view</span></div>
+    <table class="field-table">
+      <tr><th>Query param</th><th>Type</th><th>Notes</th></tr>
+      <tr><td><code>filename</code></td><td>string</td><td>Required</td></tr>
+      <tr><td><code>folder</code></td><td>string</td><td>Path like <code>"TEST/Bug bounty"</code>. Omit for root</td></tr>
+    </table>
+    <div class="code-block">
+      <pre><code id="ex-view"></code></pre>
+      <button class="copy-btn" data-example="view">Copy</button>
+    </div>
+    <p class="endpoint-desc">Response:</p>
+    <div class="code-block">
+      <pre><code>{ "id": "...", "name": "Report 001 - XSS", "folder": "TEST/Bug bounty",
+  "content": "# Report 001 - XSS\n\nDetails...", "icon": "bug", "icon_color": "#ef4444",
+  "is_shared": false, "created_at": "...", "updated_at": "..." }</code></pre>
     </div>
   </section>
 
@@ -146,8 +191,8 @@
       <tr><th>Status</th><th>Meaning</th></tr>
       <tr><td><code>400</code></td><td>Missing <code>filename</code>; an <code>icon</code>/<code>color_file</code>/<code>color_folder</code> outside the fixed set below; or nothing to delete</td></tr>
       <tr><td><code>401</code></td><td>Missing or invalid API key</td></tr>
-      <tr><td><code>403</code></td><td>Called a URL other than <code>/api/files/upload</code></td></tr>
-      <tr><td><code>404</code></td><td><code>auto_create: false</code> and the folder path doesn't fully exist yet, or deleting a file/folder that doesn't exist</td></tr>
+      <tr><td><code>403</code></td><td>Called a URL other than <code>/api/files/upload</code>, <code>/api/files/list</code>, or <code>/api/files/view</code></td></tr>
+      <tr><td><code>404</code></td><td><code>auto_create: false</code> and the folder path doesn't fully exist yet, or deleting/reading a file/folder that doesn't exist</td></tr>
     </table>
   </section>
 </div>
@@ -203,24 +248,40 @@ var EXAMPLES = {
   } },
   deleteFolder: { method: 'DELETE', path: '/api/files/upload', body: {
     folder: 'TEST/Bug bounty'
+  } },
+  list: { method: 'GET', path: '/api/files/list' },
+  view: { method: 'GET', path: '/api/files/view', query: {
+    folder: 'TEST/Bug bounty', filename: 'Report 001 - XSS'
   } }
 };
 
+function urlFor(ex) {
+  if (!ex.query) return location.origin + ex.path;
+  var qs = Object.keys(ex.query).map(function (k) {
+    return encodeURIComponent(k) + '=' + encodeURIComponent(ex.query[k]);
+  }).join('&');
+  return location.origin + ex.path + '?' + qs;
+}
 function prettyCurl(ex) {
-  return 'curl -X ' + ex.method + ' ' + location.origin + ex.path + ' \\\n' +
-    '  -H "Authorization: Bearer mdpk_YOUR_KEY" \\\n' +
-    '  -H "Content-Type: application/json" \\\n' +
-    "  -d '" + JSON.stringify(ex.body, null, 2) + "'";
+  var lines = ['curl -X ' + ex.method + ' "' + urlFor(ex) + '" \\'];
+  lines.push(ex.body ? '  -H "Authorization: Bearer mdpk_YOUR_KEY" \\' : '  -H "Authorization: Bearer mdpk_YOUR_KEY"');
+  if (ex.body) {
+    lines.push('  -H "Content-Type: application/json" \\');
+    lines.push("  -d '" + JSON.stringify(ex.body, null, 2) + "'");
+  }
+  return lines.join('\n');
 }
 function oneLineCurl(ex) {
-  return 'curl -X ' + ex.method + ' ' + location.origin + ex.path +
-    ' -H "Authorization: Bearer mdpk_YOUR_KEY" -H "Content-Type: application/json"' +
-    " -d '" + JSON.stringify(ex.body) + "'";
+  var s = 'curl -X ' + ex.method + ' "' + urlFor(ex) + '" -H "Authorization: Bearer mdpk_YOUR_KEY"';
+  if (ex.body) s += ' -H "Content-Type: application/json" -d \'' + JSON.stringify(ex.body) + "'";
+  return s;
 }
 
 document.getElementById('ex-create').textContent = prettyCurl(EXAMPLES.create);
 document.getElementById('ex-delete-file').textContent = prettyCurl(EXAMPLES.deleteFile);
 document.getElementById('ex-delete-folder').textContent = prettyCurl(EXAMPLES.deleteFolder);
+document.getElementById('ex-list').textContent = prettyCurl(EXAMPLES.list);
+document.getElementById('ex-view').textContent = prettyCurl(EXAMPLES.view);
 
 document.querySelectorAll('.copy-btn[data-example]').forEach(function (btn) {
   btn.addEventListener('click', function () {
