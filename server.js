@@ -651,6 +651,23 @@ app.get('/s/:shareId', serveIndex);
 app.get('/p/:token', serveIndex);
 app.get('/e/:token', serveIndex);
 
+// ===== ERROR HANDLER =====
+// Without this, Express's default handler returns an HTML page with a full
+// stack trace (including local file paths) for any thrown/rejected error -
+// including body-parser rejecting a request over the 10mb JSON limit. Every
+// documented API error is JSON, so this one should be too, and it shouldn't
+// leak internals.
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request body too large (max 10mb)' });
+  }
+  if (err.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+    return res.status(400).json({ error: 'Invalid JSON body' });
+  }
+  console.error('[unhandled error]', err);
+  res.status(err.status || 500).json({ error: 'Internal server error' });
+});
+
 // ===== START =====
 async function start() {
   try {

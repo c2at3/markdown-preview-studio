@@ -189,11 +189,13 @@
     </div>
     <table class="field-table">
       <tr><th>Status</th><th>Meaning</th></tr>
-      <tr><td><code>400</code></td><td>Missing <code>filename</code>; an <code>icon</code>/<code>color_file</code>/<code>color_folder</code> outside the fixed set below; or nothing to delete</td></tr>
+      <tr><td><code>400</code></td><td>Missing <code>filename</code>; an <code>icon</code>/<code>color_file</code>/<code>color_folder</code> outside the fixed set below; malformed JSON; or nothing to delete</td></tr>
       <tr><td><code>401</code></td><td>Missing or invalid API key</td></tr>
       <tr><td><code>403</code></td><td>Called a URL other than <code>/api/files/upload</code>, <code>/api/files/list</code>, or <code>/api/files/view</code></td></tr>
       <tr><td><code>404</code></td><td><code>auto_create: false</code> and the folder path doesn't fully exist yet, or deleting/reading a file/folder that doesn't exist</td></tr>
+      <tr><td><code>413</code></td><td>Request body over <strong>10MB</strong> - see the note below</td></tr>
     </table>
+    <div class="warn-box"><strong>Request size limit: 10MB.</strong> A <code>content</code> value that pushes the JSON body past 10MB is rejected with <code>413</code>. There's no way to upload a larger note in one call - split it into multiple files instead.</div>
   </section>
 </div>
 <script>
