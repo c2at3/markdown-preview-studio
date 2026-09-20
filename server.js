@@ -17,6 +17,24 @@ function hashSharePw(pw) { return crypto.createHash('sha256').update(pw).digest(
 
 function log(msg) { console.log(`[${new Date().toISOString()}] ${msg}`); }
 
+// Cloudflare caches .js/.css by extension regardless of the Cache-Control
+// header this app sends (confirmed: origin sends "no-cache", but the edge
+// serves "max-age=14400" anyway) - a deploy's new app.js/style.css could sit
+// behind that edge cache for hours. Stamping a version query string onto
+// the <script>/<link> tags sidesteps it: each deploy gets its own URL, which
+// the CDN/browser has never cached, instead of relying on cache headers it
+// doesn't respect for these two files.
+const ASSET_VERSION = crypto.createHash('md5')
+  .update(fs.readFileSync(path.join(__dirname, 'public', 'app.js')))
+  .update(fs.readFileSync(path.join(__dirname, 'public', 'style.css')))
+  .digest('hex').slice(0, 10);
+
+function renderVersionedHtml(filePath) {
+  return fs.readFileSync(filePath, 'utf8')
+    .replace('/style.css"', `/style.css?v=${ASSET_VERSION}"`)
+    .replace('/app.js"', `/app.js?v=${ASSET_VERSION}"`);
+}
+
 // Cookie parser
 app.use((req, res, next) => {
   req.cookies = {};
@@ -92,7 +110,11 @@ app.get('/', async (req, res, next) => {
   if (!hasUsers) return res.redirect('/setup.html');
   const user = await auth.validateSession(req.cookies.session);
   if (!user) return res.redirect('/login.html');
-  next();
+  res.type('html').send(renderVersionedHtml(path.join(__dirname, 'public', 'index.html')));
+});
+
+app.get('/docs.html', (req, res) => {
+  res.type('html').send(renderVersionedHtml(path.join(__dirname, 'public', 'docs.html')));
 });
 
 app.get('/login.html', async (req, res, next) => {
@@ -646,7 +668,7 @@ app.post('/api/upload', (req, res) => {
 });
 
 // ===== SPA =====
-const serveIndex = (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html'));
+const serveIndex = (req, res) => res.type('html').send(renderVersionedHtml(path.join(__dirname, 'public', 'index.html')));
 app.get('/s/:shareId', serveIndex);
 app.get('/p/:token', serveIndex);
 app.get('/e/:token', serveIndex);
