@@ -76,7 +76,13 @@ body {
 /* ===== SIDEBAR ===== */
 .sidebar {
   width: var(--sidebar-w);
+  /* 100vh on mobile is the viewport with the browser's address bar
+     collapsed - taller than what's actually visible when it's shown, which
+     pushed the statusbar below the fold with no way to scroll to it since
+     body has overflow:hidden. 100dvh tracks the real visible height;
+     browsers without it just keep the 100vh fallback above. */
   height: 100vh;
+  height: 100dvh;
   background: var(--bg-alt);
   border-right: 1px solid var(--border);
   display: flex;
@@ -397,7 +403,8 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
   display: flex;
   flex-direction: column;
   min-width: 0;
-  height: 100vh;
+  height: 100vh; /* see the comment on .sidebar - same mobile address-bar issue */
+  height: 100dvh;
   position: relative;
 }
 
@@ -1720,6 +1727,13 @@ body.dark .cm-attribute { color: #ffcb6b; }
      line and let the buttons flow onto a second line below it. */
   .find-row { flex-wrap: wrap; row-gap: 6px; }
   .find-input-wrap { flex-basis: 100%; }
+
+  /* The preview pane's font-size and padding were sized for a desktop
+     reading width - on a phone the same em-based headings and 28px side
+     padding read oversized and eat into an already-narrow column. The
+     "Aa" control only resizes the code editor, not this pane, so there's
+     no other way to adjust it. */
+  .preview-content { padding: 14px 16px; font-size: 14px; }
 
   /* Icon-only toolbar buttons - there isn't room for both icon and label. */
   .tool-btn-label, .sync-label { display: none; }
