@@ -214,18 +214,23 @@
 
     <!-- Status bar -->
     <footer class="statusbar">
-      <div class="statusbar-group">
-        <span class="sb-label">Size</span>
-        <button class="sb-btn" id="font-down" title="Giảm cỡ chữ">-</button>
-        <span class="sb-value" id="font-size-val">14</span>
-        <button class="sb-btn" id="font-up" title="Tăng cỡ chữ">+</button>
-      </div>
-      <span class="dot" id="sb-font-dot"></span>
-      <div class="statusbar-group">
-        <span class="sb-label">Weight</span>
-        <button class="sb-btn" id="weight-down" title="Mảnh hơn">-</button>
-        <span class="sb-value" id="weight-val">300</span>
-        <button class="sb-btn" id="weight-up" title="Đậm hơn">+</button>
+      <div class="text-settings-control" id="text-settings-control">
+        <button class="sb-toggle-btn" id="btn-text-settings" title="Text size &amp; weight">Aa</button>
+        <div class="text-settings-popover">
+          <div class="statusbar-group">
+            <span class="sb-label">Size</span>
+            <button class="sb-btn" id="font-down" title="Giảm cỡ chữ">-</button>
+            <span class="sb-value" id="font-size-val">14</span>
+            <button class="sb-btn" id="font-up" title="Tăng cỡ chữ">+</button>
+          </div>
+          <span class="dot" id="sb-font-dot"></span>
+          <div class="statusbar-group">
+            <span class="sb-label">Weight</span>
+            <button class="sb-btn" id="weight-down" title="Mảnh hơn">-</button>
+            <span class="sb-value" id="weight-val">300</span>
+            <button class="sb-btn" id="weight-up" title="Đậm hơn">+</button>
+          </div>
+        </div>
       </div>
       <span class="spacer"></span>
       <span id="stat-lines">0 lines</span>

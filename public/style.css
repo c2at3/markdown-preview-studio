@@ -547,7 +547,8 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
   transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
 }
 .layout-control:hover .layout-dropdown,
-.layout-control:focus-within .layout-dropdown {
+.layout-control:focus-within .layout-dropdown,
+.layout-control.open .layout-dropdown {
   opacity: 1;
   visibility: visible;
   transform: translateY(0);
@@ -647,6 +648,11 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
   flex: 1 !important;
   width: 100% !important;
   height: 100% !important;
+  /* The mobile stacked-layout rule below caps each pane at 50% height for
+     when both are visible at once - max-height always wins over height
+     regardless of !important, so it has to be lifted here too or a
+     fullscreen pane on mobile silently gets clamped to half the screen. */
+  max-height: none !important;
 }
 .editor-container.layout-full .divider {
   display: none;
@@ -1019,6 +1025,23 @@ body.dark .cm-attribute { color: #ffcb6b; }
 }
 .statusbar .spacer { flex: 1; }
 .stat-save { font-size: 10px; color: var(--accent); font-weight: 500; }
+
+/* ===== TEXT SETTINGS (Size/Weight) - inline on desktop, tap-popover on mobile ===== */
+.text-settings-control { display: contents; }
+.text-settings-popover { display: contents; }
+.sb-toggle-btn {
+  display: none;
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  cursor: pointer;
+  color: var(--text-3);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-sans);
+}
+.sb-toggle-btn:hover { background: var(--bg-hover); color: var(--text); }
 
 /* ===== SCROLLBAR (thin globally) ===== */
 * {
@@ -1680,11 +1703,6 @@ body.dark .cm-attribute { color: #ffcb6b; }
   .toolbar-group { display: none; }
   .file-name-input { max-width: 140px; }
 
-  /* The layout switcher is a hover-triggered dropdown - there's no hover on
-     touch, and a phone screen is already one column, so it has nothing
-     useful to offer here. */
-  .layout-control { display: none; }
-
   /* Input + button side by side don't fit a phone-width modal - stack them
      instead of squeezing the name field down to a few characters. */
   .apikey-create-row { flex-direction: column; }
@@ -1701,9 +1719,34 @@ body.dark .cm-attribute { color: #ffcb6b; }
   .tool-btn-label, .sync-label { display: none; }
   .tool-btn { padding: 5px; }
 
-  /* Font size/weight steppers overflowed the statusbar on a phone; drop
-     them and keep the file stats, which are more worth the space here. */
-  .statusbar-group, #sb-font-dot {
-    display: none;
+  /* Font size/weight steppers overflowed the statusbar inline on a phone -
+     tuck them behind a tap-open popover instead of just dropping them, so
+     they're still reachable rather than gone. */
+  .text-settings-control { display: block; position: relative; }
+  .sb-toggle-btn { display: block; }
+  .text-settings-popover {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    margin-bottom: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    padding: 8px 10px;
+    white-space: nowrap;
+    z-index: 20;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(4px);
+    transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+  }
+  .text-settings-control.open .text-settings-popover {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
   }
 }

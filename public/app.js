@@ -630,6 +630,13 @@ graph TD
   $('#weight-up').addEventListener('click', () => { const i = WEIGHT_STEPS.indexOf(editorFontWeight); editorFontWeight = WEIGHT_STEPS[Math.min(i + 1, WEIGHT_STEPS.length - 1)] || 700; applyFont(); });
   $('#weight-down').addEventListener('click', () => { const i = WEIGHT_STEPS.indexOf(editorFontWeight); editorFontWeight = WEIGHT_STEPS[Math.max(i - 1, 0)] || 200; applyFont(); });
 
+  // On mobile the Size/Weight steppers live behind a tap-open popover
+  // instead of sitting inline in the statusbar - same tap/click-outside
+  // pattern as the layout switcher (there's no hover on touch).
+  const textSettingsControl = $('#text-settings-control');
+  $('#btn-text-settings').addEventListener('click', (e) => { e.stopPropagation(); textSettingsControl.classList.toggle('open'); });
+  document.addEventListener('click', (e) => { if (!textSettingsControl.contains(e.target)) textSettingsControl.classList.remove('open'); });
+
   applyFont();
 
   // ===== Find/Replace =====
@@ -1597,7 +1604,10 @@ graph TD
   }
 
   // ===== Layout mode (split-v / split-h / full) =====
-  let layoutMode = localStorage.getItem('md-layout-mode') || 'split-v';
+  // On a phone there's no room to show both panes at a readable size, so a
+  // first-time visitor there starts in fullscreen (one pane + toggle)
+  // instead of the split-vertical default that makes sense on desktop.
+  let layoutMode = localStorage.getItem('md-layout-mode') || (window.innerWidth <= 768 ? 'full' : 'split-v');
   let fullView = localStorage.getItem('md-layout-full-view') || 'editor';
 
   const LAYOUT_ICONS = {
@@ -1617,6 +1627,7 @@ graph TD
 
     container.classList.toggle('layout-stacked', mode === 'split-h');
     container.classList.toggle('layout-full', mode === 'full');
+    if (mode !== 'full') { editorPane.classList.remove('full-visible'); previewPane.classList.remove('full-visible'); }
 
     $('#layout-main-icon').innerHTML = LAYOUT_ICONS[mode];
     $$('.layout-option[data-mode]').forEach((btn) => btn.classList.toggle('active', btn.dataset.mode === mode));
@@ -1639,9 +1650,17 @@ graph TD
   }
 
   function setupLayoutSwitch() {
-    $$('.layout-option[data-mode]').forEach((btn) => btn.addEventListener('click', () => applyLayoutMode(btn.dataset.mode)));
-    $('#full-view-btn-editor').addEventListener('click', () => applyFullView('editor'));
-    $('#full-view-btn-preview').addEventListener('click', () => applyFullView('preview'));
+    const control = $('#layout-control');
+    $$('.layout-option[data-mode]').forEach((btn) => btn.addEventListener('click', () => { applyLayoutMode(btn.dataset.mode); control.classList.remove('open'); }));
+    $('#full-view-btn-editor').addEventListener('click', () => { applyFullView('editor'); control.classList.remove('open'); });
+    $('#full-view-btn-preview').addEventListener('click', () => { applyFullView('preview'); control.classList.remove('open'); });
+
+    // The dropdown opens on hover for a mouse, but touch has no hover -
+    // tapping the button toggles it open/closed instead, and tapping
+    // anywhere else closes it.
+    $('#layout-btn-main').addEventListener('click', (e) => { e.stopPropagation(); control.classList.toggle('open'); });
+    document.addEventListener('click', (e) => { if (!control.contains(e.target)) control.classList.remove('open'); });
+
     applyLayoutMode(layoutMode);
   }
 
