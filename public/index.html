@@ -16,6 +16,9 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" id="hljs-dark" disabled>
 </head>
 <body>
+  <!-- Sidebar backdrop (mobile only - tap to close) -->
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
   <!-- Sidebar -->
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
@@ -114,11 +117,11 @@
         <div class="toolbar-divider"></div>
         <button class="tool-btn accent" id="btn-share" title="Share">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>
-          Share
+          <span class="tool-btn-label">Share</span>
         </button>
         <button class="tool-btn" id="btn-export" title="Export PDF">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-          PDF
+          <span class="tool-btn-label">PDF</span>
         </button>
         <label class="sync-toggle" title="Cuộn đồng bộ editor và preview">
           <input type="checkbox" id="toggle-sync" checked>
@@ -217,7 +220,7 @@
         <span class="sb-value" id="font-size-val">14</span>
         <button class="sb-btn" id="font-up" title="Tăng cỡ chữ">+</button>
       </div>
-      <span class="dot"></span>
+      <span class="dot" id="sb-font-dot"></span>
       <div class="statusbar-group">
         <span class="sb-label">Weight</span>
         <button class="sb-btn" id="weight-down" title="Mảnh hơn">-</button>
