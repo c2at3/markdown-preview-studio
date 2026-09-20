@@ -86,6 +86,19 @@ body {
   z-index: 20;
 }
 
+/* Dimmed backdrop behind the sidebar when it's open on mobile - tap it to
+   close, same as swiping the sidebar away on a phone. JS only adds .show
+   while the sidebar is open on a narrow viewport, so this stays inert on
+   desktop regardless. */
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 90;
+}
+.sidebar-backdrop.show { display: block; }
+
 .sidebar.collapsed {
   margin-left: calc(-1 * var(--sidebar-w));
   opacity: 0;
@@ -1616,6 +1629,14 @@ body.dark .cm-attribute { color: #ffcb6b; }
   line-height: 1.6;
 }
 
+.apikey-create-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.apikey-create-row .file-name-input { flex: 1; }
+.apikey-create-row #apikey-create-btn { margin: 0; width: auto; }
+
 /* ===== SHARED BANNER ===== */
 .shared-banner {
   position: fixed;
@@ -1657,5 +1678,32 @@ body.dark .cm-attribute { color: #ffcb6b; }
   .editor-container .pane { flex: 1 1 0; min-height: 0; max-height: 50%; }
   .divider { width: 100%; height: 1px; cursor: row-resize; }
   .toolbar-group { display: none; }
-  .file-name-input { max-width: 200px; }
+  .file-name-input { max-width: 140px; }
+
+  /* The layout switcher is a hover-triggered dropdown - there's no hover on
+     touch, and a phone screen is already one column, so it has nothing
+     useful to offer here. */
+  .layout-control { display: none; }
+
+  /* Input + button side by side don't fit a phone-width modal - stack them
+     instead of squeezing the name field down to a few characters. */
+  .apikey-create-row { flex-direction: column; }
+  .apikey-create-row .file-name-input { max-width: none; width: 100%; }
+  .apikey-create-row #apikey-create-btn { width: 100%; justify-content: center; }
+
+  /* The find/replace row (input + options + count + nav buttons) doesn't
+     fit in one line on a phone - wrap the input onto its own full-width
+     line and let the buttons flow onto a second line below it. */
+  .find-row { flex-wrap: wrap; row-gap: 6px; }
+  .find-input-wrap { flex-basis: 100%; }
+
+  /* Icon-only toolbar buttons - there isn't room for both icon and label. */
+  .tool-btn-label, .sync-label { display: none; }
+  .tool-btn { padding: 5px; }
+
+  /* Font size/weight steppers overflowed the statusbar on a phone; drop
+     them and keep the file stats, which are more worth the space here. */
+  .statusbar-group, #sb-font-dot {
+    display: none;
+  }
 }

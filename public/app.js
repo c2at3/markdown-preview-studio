@@ -14,6 +14,18 @@
   const modalBody = $('#modal-body');
   const sidebar = $('#sidebar');
 
+  // ===== Sidebar open/close (mobile: dims the page behind it, tap it to close) =====
+  function closeSidebar() {
+    sidebar.classList.add('collapsed');
+    $('#btn-open-sidebar').style.display = 'flex';
+    $('#sidebar-backdrop').classList.remove('show');
+  }
+  function openSidebar() {
+    sidebar.classList.remove('collapsed');
+    $('#btn-open-sidebar').style.display = 'none';
+    if (window.innerWidth <= 768) $('#sidebar-backdrop').classList.add('show');
+  }
+
   // ===== CodeMirror Editor =====
   const cm = CodeMirror($('#editor-wrap'), {
     mode: 'gfm',
@@ -1305,9 +1317,9 @@ graph TD
       : '<p style="color:var(--text-3);font-size:13px;text-align:center;padding:16px 0">No API keys yet.</p>';
 
     modalBody.innerHTML = listHTML +
-      '<div style="display:flex;gap:8px;margin-bottom:8px">' +
-        '<input type="text" id="apikey-name-input" class="file-name-input" placeholder="Key name (e.g. Zapier)" style="flex:1">' +
-        '<button class="btn-new-file" id="apikey-create-btn" style="margin:0;width:auto">Create</button>' +
+      '<div class="apikey-create-row">' +
+        '<input type="text" id="apikey-name-input" class="file-name-input" placeholder="Key name (e.g. Zapier)">' +
+        '<button class="btn-new-file" id="apikey-create-btn">Create</button>' +
       '</div>' +
       '<p class="share-info">Full read/write access to files, folders, and templates. <a href="/docs.html" target="_blank" rel="noopener noreferrer">View API docs</a></p>';
 
@@ -1894,8 +1906,7 @@ graph TD
     render();
     banner.style.display = 'block';
     $('.main').style.marginTop = '38px';
-    sidebar.classList.add('collapsed');
-    $('#btn-open-sidebar').style.display = 'none';
+    closeSidebar();
     $('#btn-close-banner').addEventListener('click', () => { banner.style.display = 'none'; $('.main').style.marginTop = '0'; });
   }
 
@@ -1936,6 +1947,10 @@ graph TD
 
   // ===== Init =====
   async function init() {
+    // Start with the sidebar out of the way on a phone - otherwise it fills
+    // the whole screen on first load and there's nothing else visible.
+    if (window.innerWidth <= 768) closeSidebar();
+
     // Auth check
     try {
       const authRes = await fetch('/api/auth/status');
@@ -2012,8 +2027,9 @@ graph TD
       });
     });
     $('#btn-new-folder').addEventListener('click', createNewFolder);
-    $('#btn-toggle-sidebar').addEventListener('click', () => { sidebar.classList.add('collapsed'); $('#btn-open-sidebar').style.display = 'flex'; });
-    $('#btn-open-sidebar').addEventListener('click', () => { sidebar.classList.remove('collapsed'); $('#btn-open-sidebar').style.display = 'none'; });
+    $('#btn-toggle-sidebar').addEventListener('click', closeSidebar);
+    $('#btn-open-sidebar').addEventListener('click', openSidebar);
+    $('#sidebar-backdrop').addEventListener('click', closeSidebar);
     $('#btn-apikeys').addEventListener('click', openApiKeysManager);
     $('#btn-about').addEventListener('click', () => {
       modalTitle.textContent = 'About';
