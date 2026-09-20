@@ -540,7 +540,10 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
   flex-direction: column;
   gap: 2px;
   min-width: 172px;
-  z-index: 20;
+  /* Above .sidebar (100) and .sidebar-backdrop (90) on mobile - otherwise
+     opening this while the sidebar is open renders it behind the dimmed
+     backdrop, invisible. */
+  z-index: 150;
   opacity: 0;
   visibility: hidden;
   transform: translateY(-4px);
@@ -1026,9 +1029,12 @@ body.dark .cm-attribute { color: #ffcb6b; }
 .statusbar .spacer { flex: 1; }
 .stat-save { font-size: 10px; color: var(--accent); font-weight: 500; }
 
-/* ===== TEXT SETTINGS (Size/Weight) - inline on desktop, tap-popover on mobile ===== */
-.text-settings-control { display: contents; }
-.text-settings-popover { display: contents; }
+/* ===== TEXT SETTINGS (Size/Weight) - inline on desktop, tap-popover on mobile =====
+   Nested flex rows matching .statusbar's own gap, not display:contents - contents
+   dropped these from flex-item layout entirely in real-world testing (Chrome/desktop),
+   collapsing the Size/Weight controls instead of leaving them inline as intended. */
+.text-settings-control { display: flex; align-items: center; gap: 8px; }
+.text-settings-popover { display: flex; align-items: center; gap: 8px; }
 .sb-toggle-btn {
   display: none;
   background: none;
@@ -1738,7 +1744,8 @@ body.dark .cm-attribute { color: #ffcb6b; }
     box-shadow: var(--shadow-lg);
     padding: 8px 10px;
     white-space: nowrap;
-    z-index: 20;
+    /* Same reasoning as .layout-dropdown - must clear .sidebar (100). */
+    z-index: 150;
     opacity: 0;
     visibility: hidden;
     transform: translateY(4px);
