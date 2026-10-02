@@ -1754,6 +1754,15 @@ body.dark .cm-attribute { color: #ffcb6b; }
   .tool-btn-label, .sync-label { display: none; }
   .tool-btn { padding: 5px; }
 
+  /* The formatting and MD/HTML-copy groups collapse to nothing on mobile
+     (.toolbar-group above), but the plain divider bars next to them don't
+     know that and were left behind as a dangling run of "| |" marks with
+     nothing between them. Hide every divider in the toolbar except the one
+     actually separating two things that are still visible (find vs. the
+     tools drawer). */
+  .toolbar-right > .toolbar-divider { display: none; }
+  #divider-find-tools { display: block; }
+
   /* Find/dark-mode/share/PDF/sync/layout together don't fit inline on a
      phone - tuck them behind a single "more tools" button instead, same
      tap/outside-tap pattern as the layout and text-settings dropdowns. */
