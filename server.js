@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const multer = require('multer');
+const archiver = require('archiver');
 const { nanoid } = require('nanoid');
 const db = require('./lib/db');
 const auth = require('./lib/auth');
@@ -514,6 +515,93 @@ app.get('/api/files/view', async (req, res) => {
     created_at: file.created_at,
     updated_at: file.updated_at
   });
+});
+
+// Browser-download helpers (session UI only, not part of the API-key
+// surface) - a Content-Disposition header with both a plain-ASCII
+// "filename" fallback and a UTF-8 "filename*" (RFC 5987) so names with
+// Vietnamese/accented characters still download correctly everywhere.
+function contentDisposition(filename) {
+  const ascii = filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, "'");
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
+
+function mdFilename(name) {
+  return /\.[a-z0-9]+$/i.test(name) ? name : name + '.md';
+}
+
+// Walks the folder tree starting at rootFolderId (or the whole tree, from
+// root files and top-level folders down, when null) and returns every file
+// under it as { id, name, relPath } - relPath is the name prefixed by each
+// folder it's nested in, relative to rootFolderId, e.g. "Sub/notes.md".
+async function collectFilesUnder(rootFolderId) {
+  const allFolders = await db.query('SELECT id, name, parent_id FROM folders');
+  const childrenOf = new Map();
+  for (const f of allFolders) {
+    const key = f.parent_id || 'root';
+    if (!childrenOf.has(key)) childrenOf.set(key, []);
+    childrenOf.get(key).push(f);
+  }
+  const results = [];
+  async function walk(folderId, prefix) {
+    const files = folderId
+      ? await db.query('SELECT id, name FROM files WHERE folder_id = ? ORDER BY name', [folderId])
+      : await db.query('SELECT id, name FROM files WHERE folder_id IS NULL ORDER BY name');
+    for (const f of files) results.push({ id: f.id, name: f.name, relPath: prefix + f.name });
+    for (const sub of childrenOf.get(folderId || 'root') || []) await walk(sub.id, prefix + sub.name + '/');
+  }
+  await walk(rootFolderId, '');
+  return results;
+}
+
+// Streams a zip of the given file entries straight to the response - file
+// content comes from one batched query, nothing is written to disk first.
+async function sendZip(res, downloadName, entries) {
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', contentDisposition(downloadName));
+  const contentById = new Map(
+    entries.length ? (await db.query('SELECT id, content FROM files WHERE id = ANY(?)', [entries.map(e => e.id)])).map(f => [f.id, f.content]) : []
+  );
+  const archive = archiver('zip', { zlib: { level: 9 } });
+  archive.on('error', (err) => { console.error('[zip]', err); if (!res.headersSent) res.status(500).end(); });
+  archive.pipe(res);
+  // The app allows two files to share the same name in the same folder, but
+  // a zip can't - two entries at the same path silently overwrite each
+  // other on extraction. De-dupe with a " (2)", " (3)", ... suffix.
+  const seenCounts = new Map();
+  for (const entry of entries) {
+    let name = mdFilename(entry.relPath);
+    const seen = seenCounts.get(name);
+    if (seen) {
+      seenCounts.set(name, seen + 1);
+      const dot = name.lastIndexOf('.');
+      name = dot > 0 ? `${name.slice(0, dot)} (${seen + 1})${name.slice(dot)}` : `${name} (${seen + 1})`;
+    } else {
+      seenCounts.set(name, 1);
+    }
+    archive.append(contentById.get(entry.id) || '', { name });
+  }
+  await archive.finalize();
+}
+
+app.get('/api/files/:id/download', async (req, res) => {
+  const file = await db.get('SELECT name, content FROM files WHERE id = ?', [req.params.id]);
+  if (!file) return res.status(404).json({ error: 'Not found' });
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.setHeader('Content-Disposition', contentDisposition(mdFilename(file.name)));
+  res.send(file.content || '');
+});
+
+app.get('/api/folders/:id/download', async (req, res) => {
+  const folder = await db.get('SELECT name FROM folders WHERE id = ?', [req.params.id]);
+  if (!folder) return res.status(404).json({ error: 'Not found' });
+  const entries = await collectFilesUnder(req.params.id);
+  await sendZip(res, folder.name + '.zip', entries);
+});
+
+app.get('/api/backup', async (req, res) => {
+  const entries = await collectFilesUnder(null);
+  await sendZip(res, `markdown-backup-${new Date().toISOString().slice(0, 10)}.zip`, entries);
 });
 
 app.get('/api/files/:id', async (req, res) => {
