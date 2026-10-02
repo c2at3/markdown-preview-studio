@@ -2025,8 +2025,13 @@ graph TD
     '.hljs-attribute,.hljs-property{color:#0550ae}',
     '.hljs-deletion{color:#82071e;background:#ffebe9}.hljs-addition{background:#dafbe1}',
     '.hljs-emphasis{font-style:italic}.hljs-strong{font-weight:700}',
-    '@page{size:A4;margin:14mm 16mm 16mm}',
-    '@media print{body{padding:0}.md,.export-meta{max-width:none}}'
+    // Zero page margin: the browser's own header/footer (date, title, URL,
+    // page numbers) lives in the margin, so with no margin there's nowhere to
+    // print it. The visual margins come from side padding plus the repeating
+    // thead (top) / tfoot (bottom) spacers instead.
+    '@page{size:A4;margin:0}',
+    '.page-frame>tfoot>tr>td{border:0;padding:0}.page-foot{height:0}',
+    '@media print{body{padding:0 16mm}.md,.export-meta{max-width:none}.page-frame>thead>tr>th{padding-top:14mm}.page-foot{height:16mm}}'
   ].join('\n');
 
   function exportBaseName() {
@@ -2096,6 +2101,7 @@ graph TD
       '<meta name="viewport" content="width=device-width,initial-scale=1">' +
       '<title>' + escapeHtml(title) + '</title><style>' + EXPORT_CSS + '</style></head><body>' +
       '<table class="page-frame"><thead><tr><th><div class="export-meta">' + escapeHtml(exportMeta()) + '</div></th></tr></thead>' +
+      '<tfoot><tr><td><div class="page-foot"></div></td></tr></tfoot>' +
       '<tbody><tr><td><article class="md">' + bodyHtml + '</article></td></tr></tbody></table></body></html>';
   }
 
