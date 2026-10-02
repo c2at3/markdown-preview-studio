@@ -364,6 +364,50 @@ body {
   text-decoration: none;
 }
 .sidebar-icon-btn:hover { color: var(--text); }
+
+/* Settings gear: tap-open menu (icon + label per item) that pops up above the
+   footer. Same open/close-outside pattern as the other dropdowns. */
+.sidebar-footer { position: relative; }
+.settings-menu-wrap { display: flex; }
+.settings-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 10px;
+  right: 10px;
+  margin-bottom: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  z-index: 150;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+}
+.settings-menu-wrap.open .settings-menu { opacity: 1; visibility: visible; transform: translateY(0); }
+.settings-menu-wrap.open > .sidebar-icon-btn { color: var(--text); background: var(--bg-hover); }
+.settings-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.settings-menu-item svg { flex-shrink: 0; color: var(--text-3); }
+.settings-menu-item:hover { background: var(--bg-hover); color: var(--text); }
+.settings-menu-item:hover svg { color: var(--text); }
 .sidebar-link {
   color: var(--text-3);
   padding: 4px;
@@ -386,16 +430,6 @@ body {
 }
 .sidebar-logout:hover { color: var(--danger); background: var(--danger-soft); }
 
-.sidebar-toggle {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  color: var(--text-2);
-}
-.sidebar-toggle input { display: none; }
-.sidebar-toggle .icon-moon { display: none; }
-body.dark .sidebar-toggle .icon-sun { display: none; }
-body.dark .sidebar-toggle .icon-moon { display: block; }
 
 /* ===== MAIN ===== */
 .main {
@@ -457,8 +491,10 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
   font-weight: 600;
   color: var(--text);
   flex: 1;
-  max-width: 400px;
-  min-width: 120px;
+  /* Grows into all free space in the header and only stops at the next
+     element; longer than that, it truncates with an ellipsis. */
+  min-width: 0;
+  text-overflow: ellipsis;
   transition: all 0.15s;
   font-family: var(--font-sans);
 }
@@ -524,9 +560,8 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
 .sync-toggle input { display: none; }
 .sync-label { white-space: nowrap; }
 
-/* Dark-mode toggle duplicated into the toolbar (desktop: inline; mobile:
-   inside the tools drawer) - same sun/moon swap as the sidebar's own
-   toggle, just scoped to this button instead of a checkbox label. */
+/* Dark-mode toggle in the toolbar (desktop: inline; mobile: inside the
+   tools drawer) - the only dark-mode switch in the app. */
 .mt-dark-toggle .icon-moon { display: none; }
 body.dark .mt-dark-toggle .icon-sun { display: none; }
 body.dark .mt-dark-toggle .icon-moon { display: block; }
@@ -1736,7 +1771,6 @@ body.dark .cm-attribute { color: #ffcb6b; }
   .editor-container .pane { flex: 1 1 0; min-height: 0; max-height: 50%; }
   .divider { width: 100%; height: 1px; cursor: row-resize; }
   .toolbar-group { display: none; }
-  .file-name-input { max-width: 140px; }
 
   /* Input + button side by side don't fit a phone-width modal - stack them
      instead of squeezing the name field down to a few characters. */

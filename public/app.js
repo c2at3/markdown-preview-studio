@@ -14,6 +14,11 @@
   const modalBody = $('#modal-body');
   const sidebar = $('#sidebar');
 
+  // Tooltip with the full name, only while it's actually cut off by an ellipsis.
+  fileNameInput.addEventListener('mouseenter', () => {
+    fileNameInput.title = fileNameInput.scrollWidth > fileNameInput.clientWidth ? fileNameInput.value : '';
+  });
+
   // ===== Sidebar open/close (mobile: dims the page behind it, tap it to close) =====
   // On mobile the "<<" button cycles collapsed -> open -> full -> collapsed
   // instead of only collapsing, so long file/folder names have a wider state
@@ -1689,7 +1694,6 @@ graph TD
   // ===== Dark mode =====
   function applyDark(dark) {
     document.body.classList.toggle('dark', dark);
-    $('#toggle-dark').checked = dark;
     localStorage.setItem('md-dark', dark ? '1' : '0');
     cm.setOption('theme', dark ? 'dark' : 'default');
     $('#hljs-light').disabled = dark;
@@ -2071,6 +2075,10 @@ graph TD
     $('#btn-toggle-sidebar').addEventListener('click', expandOrCloseSidebar);
     $('#btn-open-sidebar').addEventListener('click', openSidebar);
     $('#sidebar-backdrop').addEventListener('click', closeSidebar);
+    const settingsWrap = $('#settings-menu-wrap');
+    $('#btn-settings').addEventListener('click', (e) => { e.stopPropagation(); settingsWrap.classList.toggle('open'); });
+    $('#settings-menu').addEventListener('click', () => settingsWrap.classList.remove('open'));
+    document.addEventListener('click', (e) => { if (!settingsWrap.contains(e.target)) settingsWrap.classList.remove('open'); });
     $('#btn-apikeys').addEventListener('click', openApiKeysManager);
     $('#btn-backup').addEventListener('click', () => { window.location.href = '/api/backup'; });
     $('#btn-about').addEventListener('click', () => {
@@ -2143,7 +2151,6 @@ graph TD
     $('#btn-find').addEventListener('click', () => toggleFindPanel());
     $('#btn-share').addEventListener('click', () => shareCurrentFile());
     $('#btn-export').addEventListener('click', exportPDF);
-    $('#toggle-dark').addEventListener('change', () => applyDark($('#toggle-dark').checked));
     $('#mt-dark-toggle').addEventListener('click', () => applyDark(!document.body.classList.contains('dark')));
 
     // Mobile tools drawer (find/dark/share/PDF/sync/layout) - tap the "more
