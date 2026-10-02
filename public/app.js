@@ -15,15 +15,27 @@
   const sidebar = $('#sidebar');
 
   // ===== Sidebar open/close (mobile: dims the page behind it, tap it to close) =====
+  // On mobile the "<<" button cycles collapsed -> open -> full -> collapsed
+  // instead of only collapsing, so long file/folder names have a wider state
+  // to expand into without giving up the normal partial-width overlay.
   function closeSidebar() {
     sidebar.classList.add('collapsed');
+    sidebar.classList.remove('full');
     $('#btn-open-sidebar').style.display = 'flex';
     $('#sidebar-backdrop').classList.remove('show');
   }
   function openSidebar() {
     sidebar.classList.remove('collapsed');
+    sidebar.classList.remove('full');
     $('#btn-open-sidebar').style.display = 'none';
     if (window.innerWidth <= 768) $('#sidebar-backdrop').classList.add('show');
+  }
+  function expandOrCloseSidebar() {
+    if (window.innerWidth <= 768 && !sidebar.classList.contains('full')) {
+      sidebar.classList.add('full');
+    } else {
+      closeSidebar();
+    }
   }
 
   // ===== CodeMirror Editor =====
@@ -2056,7 +2068,7 @@ graph TD
       });
     });
     $('#btn-new-folder').addEventListener('click', createNewFolder);
-    $('#btn-toggle-sidebar').addEventListener('click', closeSidebar);
+    $('#btn-toggle-sidebar').addEventListener('click', expandOrCloseSidebar);
     $('#btn-open-sidebar').addEventListener('click', openSidebar);
     $('#sidebar-backdrop').addEventListener('click', closeSidebar);
     $('#btn-apikeys').addEventListener('click', openApiKeysManager);

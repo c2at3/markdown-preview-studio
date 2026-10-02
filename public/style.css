@@ -1723,8 +1723,15 @@ body.dark .cm-attribute { color: #ffcb6b; }
 
 /* ===== RESPONSIVE ===== */
 @media (max-width: 768px) {
-  .sidebar { position: fixed; left: 0; top: 0; z-index: 100; box-shadow: var(--shadow-lg); }
+  .sidebar { position: fixed; left: 0; top: 0; z-index: 100; box-shadow: var(--shadow-lg); transition: margin-left 0.25s ease, width 0.25s ease; }
   .sidebar.collapsed { margin-left: calc(-1 * var(--sidebar-w)); }
+  /* Third tap-state (collapsed -> open -> full -> collapsed) so long file/
+     folder names aren't stuck truncated at the normal 240px open width. */
+  .sidebar.full { right: 0; width: auto; }
+  /* Chevron points ">" while the next tap expands, back to "<" once full
+     (next tap collapses). */
+  #btn-toggle-sidebar svg { transition: transform 0.2s; transform: rotate(180deg); }
+  .sidebar.full #btn-toggle-sidebar svg { transform: none; }
   .editor-container { flex-direction: column; }
   .editor-container .pane { flex: 1 1 0; min-height: 0; max-height: 50%; }
   .divider { width: 100%; height: 1px; cursor: row-resize; }
