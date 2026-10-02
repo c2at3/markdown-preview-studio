@@ -10,6 +10,7 @@
   "dependencies": {
     "archiver": "^7.0.1",
     "express": "^4.21.0",
+    "multer": "^2.4.0",
     "nanoid": "^3.3.7",
     "pg": "^8.22.0"
   }

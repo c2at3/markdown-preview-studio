@@ -87,13 +87,14 @@
 
     <h3>Create or update</h3>
     <div class="endpoint-head"><span class="method post">POST</span><span class="endpoint-path">/api/files/upload</span></div>
-    <p class="endpoint-desc">If no file named <code>filename</code> exists yet in <code>folder</code>, it's created. If one already exists there, it's overwritten in place - this is how you "re-upload"/update a note from a script.</p>
+    <p class="endpoint-desc">If no file named <code>filename</code> exists yet in <code>folder</code>, it's created. If one already exists there, it's overwritten in place - this is how you "re-upload"/update a note from a script. Send the content either way as a <code>content</code> string in a JSON body, or as an actual <strong>uploaded file</strong> in a <code>multipart/form-data</code> body - see the two examples below.</p>
     <table class="field-table">
       <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
-      <tr><td><code>filename</code></td><td>string</td><td>Required</td></tr>
+      <tr><td><code>filename</code></td><td>string</td><td>Required, unless you're uploading a <code>file</code> - its own filename is used when this is omitted</td></tr>
       <tr><td><code>folder</code></td><td>string</td><td>Path like <code>"TEST/Bug bounty"</code> (nested folders separated by <code>/</code>). Omit for root</td></tr>
       <tr><td><code>auto_create</code></td><td>boolean</td><td>Default <code>true</code> - creates any missing folder in the path. Set <code>false</code> to fail with 404 instead of creating anything</td></tr>
-      <tr><td><code>content</code></td><td>string</td><td>Markdown source. On create, defaults to empty. On update, omit to leave the existing content untouched</td></tr>
+      <tr><td><code>content</code></td><td>string</td><td>Markdown source, as a JSON/form field. On create, defaults to empty. On update, omit to leave the existing content untouched. Ignored if <code>file</code> is also sent</td></tr>
+      <tr><td><code>file</code></td><td>file</td><td>The note's content as an actual uploaded file (<code>multipart/form-data</code>) instead of a <code>content</code> string - its bytes are read as UTF-8 text. Max 10MB, same as a JSON body</td></tr>
       <tr><td><code>icon</code></td><td>string</td><td>One of the icon names below</td></tr>
       <tr><td><code>color_file</code></td><td>string</td><td>One of the color names below (not a hex code - see <a href="#icons">Icons &amp; colors</a>)</td></tr>
       <tr><td><code>color_folder</code></td><td>string</td><td>One of the color names below. Applied only to folders newly created by this call - existing folders keep their color</td></tr>
@@ -101,6 +102,11 @@
     <div class="code-block">
       <pre><code id="ex-create"></code></pre>
       <button class="copy-btn" data-example="create">Copy</button>
+    </div>
+    <p class="endpoint-desc">Or upload an actual file instead of an inline <code>content</code> string - note there's no <code>Content-Type: application/json</code> header here, and <code>filename</code> is omitted since the uploaded file's own name (<code>report.md</code>) is used:</p>
+    <div class="code-block">
+      <pre><code id="ex-create-file"></code></pre>
+      <button class="copy-btn" data-example="createFile">Copy</button>
     </div>
     <p class="endpoint-desc">Response - <code>action</code> is <code>"created"</code> or <code>"updated"</code>; <code>created_folder_ids</code> is empty when every folder in the path already existed:</p>
     <div class="code-block">
@@ -189,13 +195,13 @@
     </div>
     <table class="field-table">
       <tr><th>Status</th><th>Meaning</th></tr>
-      <tr><td><code>400</code></td><td>Missing <code>filename</code>; an <code>icon</code>/<code>color_file</code>/<code>color_folder</code> outside the fixed set below; malformed JSON; or nothing to delete</td></tr>
+      <tr><td><code>400</code></td><td>No <code>filename</code> and no uploaded <code>file</code> to default it from; an <code>icon</code>/<code>color_file</code>/<code>color_folder</code> outside the fixed set below; malformed JSON; or nothing to delete</td></tr>
       <tr><td><code>401</code></td><td>Missing or invalid API key</td></tr>
       <tr><td><code>403</code></td><td>Called a URL other than <code>/api/files/upload</code>, <code>/api/files/list</code>, or <code>/api/files/view</code></td></tr>
       <tr><td><code>404</code></td><td><code>auto_create: false</code> and the folder path doesn't fully exist yet, or deleting/reading a file/folder that doesn't exist</td></tr>
-      <tr><td><code>413</code></td><td>Request body over <strong>10MB</strong> - see the note below</td></tr>
+      <tr><td><code>413</code></td><td>Request body, or uploaded <code>file</code>, over <strong>10MB</strong> - see the note below</td></tr>
     </table>
-    <div class="warn-box"><strong>Request size limit: 10MB.</strong> A <code>content</code> value that pushes the JSON body past 10MB is rejected with <code>413</code>. There's no way to upload a larger note in one call - split it into multiple files instead.</div>
+    <div class="warn-box"><strong>Request size limit: 10MB.</strong> A <code>content</code> value or uploaded <code>file</code> that pushes the request past 10MB is rejected with <code>413</code>. There's no way to upload a larger note in one call - split it into multiple files instead.</div>
   </section>
 </div>
 <script>
@@ -245,6 +251,9 @@ var EXAMPLES = {
     folder: 'TEST/Bug bounty', filename: 'Report 001 - XSS',
     content: '# Report 001 - XSS\n\nDetails...', icon: 'bug', color_file: 'red'
   } },
+  createFile: { method: 'POST', path: '/api/files/upload', form: {
+    folder: 'TEST/Bug bounty', icon: 'bug', color_file: 'red'
+  }, fileField: 'file', fileName: 'report.md' },
   deleteFile: { method: 'DELETE', path: '/api/files/upload', body: {
     folder: 'TEST/Bug bounty', filename: 'Report 001 - XSS'
   } },
@@ -264,22 +273,34 @@ function urlFor(ex) {
   }).join('&');
   return location.origin + ex.path + '?' + qs;
 }
+// -F flags for a multipart/form-data example (createFile) - every plain
+// field plus the uploaded file itself, in curl's "-F name=@path" form.
+function formFlags(ex, sep) {
+  var flags = Object.keys(ex.form).map(function (k) { return '-F "' + k + '=' + ex.form[k] + '"'; });
+  if (ex.fileField) flags.push('-F "' + ex.fileField + '=@' + ex.fileName + '"');
+  return flags.join(sep);
+}
 function prettyCurl(ex) {
+  var hasBody = ex.body || ex.form;
   var lines = ['curl -X ' + ex.method + ' "' + urlFor(ex) + '" \\'];
-  lines.push(ex.body ? '  -H "Authorization: Bearer mdpk_YOUR_KEY" \\' : '  -H "Authorization: Bearer mdpk_YOUR_KEY"');
+  lines.push('  -H "Authorization: Bearer mdpk_YOUR_KEY"' + (hasBody ? ' \\' : ''));
   if (ex.body) {
     lines.push('  -H "Content-Type: application/json" \\');
     lines.push("  -d '" + JSON.stringify(ex.body, null, 2) + "'");
+  } else if (ex.form) {
+    lines.push('  ' + formFlags(ex, ' \\\n  '));
   }
   return lines.join('\n');
 }
 function oneLineCurl(ex) {
   var s = 'curl -X ' + ex.method + ' "' + urlFor(ex) + '" -H "Authorization: Bearer mdpk_YOUR_KEY"';
   if (ex.body) s += ' -H "Content-Type: application/json" -d \'' + JSON.stringify(ex.body) + "'";
+  else if (ex.form) s += ' ' + formFlags(ex, ' ');
   return s;
 }
 
 document.getElementById('ex-create').textContent = prettyCurl(EXAMPLES.create);
+document.getElementById('ex-create-file').textContent = prettyCurl(EXAMPLES.createFile);
 document.getElementById('ex-delete-file').textContent = prettyCurl(EXAMPLES.deleteFile);
 document.getElementById('ex-delete-folder').textContent = prettyCurl(EXAMPLES.deleteFolder);
 document.getElementById('ex-list').textContent = prettyCurl(EXAMPLES.list);

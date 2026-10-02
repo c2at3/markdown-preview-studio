@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const multer = require('multer');
 const archiver = require('archiver');
 const { nanoid } = require('nanoid');
 const db = require('./lib/db');
@@ -13,6 +14,11 @@ const PORT = process.env.PORT || 3456;
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'data', 'uploads');
 
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+// Kept in memory, not written to disk - its bytes become a file's `content`
+// (as UTF-8 text) in the upload route below, same 10mb ceiling as a plain
+// JSON body so a multipart upload can't bypass that limit.
+const uploadFile = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 function hashSharePw(pw) { return crypto.createHash('sha256').update(pw).digest('hex'); }
 
@@ -367,10 +373,15 @@ function resolveIconKey(value) {
 // filename" instead of ids - POST creates it, or overwrites it in place
 // (same id, no duplicate) if one already exists there; DELETE removes the
 // file (with filename) or the folder itself (without filename).
-app.post('/api/files/upload', async (req, res) => {
-  const { folder, auto_create, filename, name, content } = req.body;
-  const fname = filename || name;
-  if (!fname) return res.status(400).json({ error: 'filename is required' });
+app.post('/api/files/upload', uploadFile.single('file'), async (req, res) => {
+  const { folder, auto_create } = req.body;
+  // Either a JSON/form "content" string, or an actual uploaded file whose
+  // bytes become the content (as text) - a file takes priority if somehow
+  // both are sent. Same for the name: an uploaded file's own filename is
+  // used when "filename"/"name" isn't given explicitly.
+  const content = req.file ? req.file.buffer.toString('utf8') : req.body.content;
+  const fname = req.body.filename || req.body.name || req.file?.originalname;
+  if (!fname) return res.status(400).json({ error: 'filename is required (or upload a file with a name)' });
 
   let icon, iconColor, resolved;
   try {
@@ -773,6 +784,10 @@ app.use((err, req, res, next) => {
   }
   if (err.type === 'entity.parse.failed' || err instanceof SyntaxError) {
     return res.status(400).json({ error: 'Invalid JSON body' });
+  }
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Uploaded file too large (max 10mb)' });
+    return res.status(400).json({ error: `Upload error: ${err.message}` });
   }
   console.error('[unhandled error]', err);
   res.status(err.status || 500).json({ error: 'Internal server error' });
