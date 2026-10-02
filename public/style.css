@@ -1833,4 +1833,19 @@ body.dark .cm-attribute { color: #ffcb6b; }
     visibility: visible;
     transform: translateY(0);
   }
+  /* .sb-btn (+/-) is ~15x15px, sized for a mouse cursor in the desktop
+     statusbar - far below any reasonable touch-target size, so taps on a
+     real phone kept missing it even though the tap-to-open popover itself
+     worked fine. Enlarge just the copies inside this mobile popover. */
+  .text-settings-popover .sb-btn {
+    min-width: 32px;
+    min-height: 32px;
+    justify-content: center;
+    font-size: 14px;
+    padding: 4px;
+  }
+  .text-settings-popover .sb-value {
+    font-size: 13px;
+    min-width: 28px;
+  }
 }
