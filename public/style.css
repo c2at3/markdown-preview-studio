@@ -524,6 +524,21 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
 .sync-toggle input { display: none; }
 .sync-label { white-space: nowrap; }
 
+/* Dark-mode toggle duplicated into the toolbar (desktop: inline; mobile:
+   inside the tools drawer) - same sun/moon swap as the sidebar's own
+   toggle, just scoped to this button instead of a checkbox label. */
+.mt-dark-toggle .icon-moon { display: none; }
+body.dark .mt-dark-toggle .icon-sun { display: none; }
+body.dark .mt-dark-toggle .icon-moon { display: block; }
+
+/* ===== MOBILE TOOLS DRAWER =====
+   Desktop: inert wrapper, its contents sit inline in the toolbar exactly
+   as if they weren't wrapped at all (same gap as .toolbar-right's own).
+   Mobile media query below turns it into a tap-open dropdown. */
+.mobile-tools-control { display: flex; align-items: center; gap: 4px; }
+.mobile-tools-group { display: flex; align-items: center; gap: 4px; }
+#btn-mobile-tools { display: none; }
+
 /* ===== LAYOUT CONTROL (nút bố cục, hover hiện dropdown) ===== */
 .layout-control {
   position: relative;
@@ -1738,6 +1753,45 @@ body.dark .cm-attribute { color: #ffcb6b; }
   /* Icon-only toolbar buttons - there isn't room for both icon and label. */
   .tool-btn-label, .sync-label { display: none; }
   .tool-btn { padding: 5px; }
+
+  /* Find/dark-mode/share/PDF/sync/layout together don't fit inline on a
+     phone - tuck them behind a single "more tools" button instead, same
+     tap/outside-tap pattern as the layout and text-settings dropdowns. */
+  .mobile-tools-control { position: relative; }
+  #btn-mobile-tools { display: flex; }
+  .mobile-tools-group {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: -1px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    padding: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    /* Without an explicit width, an absolutely-positioned wrapping flex
+       container shrinks to fit just one child per line instead of trying
+       everything on one line first - width:max-content fixes that, capped
+       by max-width so it still wraps if it would otherwise overflow. */
+    width: max-content;
+    max-width: 210px;
+    z-index: 150;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-4px);
+    transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+  }
+  .mobile-tools-control.open .mobile-tools-group {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+  /* The layout dropdown nests inside this drawer on mobile - needs to sit
+     above it (and above the drawer's own backdrop-adjacent siblings). */
+  .mobile-tools-group .layout-dropdown { z-index: 160; }
 
   /* Font size/weight steppers overflowed the statusbar inline on a phone -
      tuck them behind a tap-open popover instead of just dropping them, so

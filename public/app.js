@@ -914,6 +914,9 @@ graph TD
       '<button class="context-menu-item" data-action="share">' +
         '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>' +
         'Share</button>' +
+      '<button class="context-menu-item" data-action="download">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>' +
+        'Download</button>' +
       '<div class="context-menu-divider"></div>' +
       '<div class="context-menu-label">Icon</div>' +
       '<div class="ctx-icons-grid">' + iconsHTML + '</div>' +
@@ -950,6 +953,7 @@ graph TD
       const action = actionBtn?.dataset.action;
       if (action === 'pin') { await withLoading(actionBtn, () => togglePin(file.id, !file.is_pinned)); menu.remove(); return; }
       if (action === 'share') { menu.remove(); shareCurrentFile(file.id); return; }
+      if (action === 'download') { menu.remove(); window.location.href = '/api/files/' + file.id + '/download'; return; }
       if (action === 'delete') { menu.remove(); deleteFile(file.id); return; }
     });
 
@@ -1006,6 +1010,12 @@ graph TD
     const folder = folders.find(f => f.id === ctxFolderId);
     if (!folder) return;
     startFolderRename(folder);
+  });
+
+  $('#ctx-download-folder').addEventListener('click', () => {
+    ctxMenu.style.display = 'none';
+    if (!ctxFolderId) return;
+    window.location.href = '/api/folders/' + ctxFolderId + '/download';
   });
 
   document.addEventListener('click', (e) => { if (!e.target.closest('.context-menu')) ctxMenu.style.display = 'none'; });
@@ -2050,6 +2060,7 @@ graph TD
     $('#btn-open-sidebar').addEventListener('click', openSidebar);
     $('#sidebar-backdrop').addEventListener('click', closeSidebar);
     $('#btn-apikeys').addEventListener('click', openApiKeysManager);
+    $('#btn-backup').addEventListener('click', () => { window.location.href = '/api/backup'; });
     $('#btn-about').addEventListener('click', () => {
       modalTitle.textContent = 'About';
       modalBody.innerHTML = `
@@ -2121,6 +2132,14 @@ graph TD
     $('#btn-share').addEventListener('click', () => shareCurrentFile());
     $('#btn-export').addEventListener('click', exportPDF);
     $('#toggle-dark').addEventListener('change', () => applyDark($('#toggle-dark').checked));
+    $('#mt-dark-toggle').addEventListener('click', () => applyDark(!document.body.classList.contains('dark')));
+
+    // Mobile tools drawer (find/dark/share/PDF/sync/layout) - tap the "more
+    // tools" button to open, tap anywhere outside to close. Same pattern as
+    // the layout and text-settings dropdowns (no hover on touch).
+    const mobileToolsControl = $('#mobile-tools-control');
+    $('#btn-mobile-tools').addEventListener('click', (e) => { e.stopPropagation(); mobileToolsControl.classList.toggle('open'); });
+    document.addEventListener('click', (e) => { if (!mobileToolsControl.contains(e.target)) mobileToolsControl.classList.remove('open'); });
 
     $('#modal-close').addEventListener('click', () => modalOverlay.classList.remove('show'));
     modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) modalOverlay.classList.remove('show'); });
