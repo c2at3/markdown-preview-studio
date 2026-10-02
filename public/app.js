@@ -2075,6 +2075,10 @@ graph TD
     $('#btn-toggle-sidebar').addEventListener('click', expandOrCloseSidebar);
     $('#btn-open-sidebar').addEventListener('click', openSidebar);
     $('#sidebar-backdrop').addEventListener('click', closeSidebar);
+    const settingsWrap = $('#settings-menu-wrap');
+    $('#btn-settings').addEventListener('click', (e) => { e.stopPropagation(); settingsWrap.classList.toggle('open'); });
+    $('#settings-menu').addEventListener('click', () => settingsWrap.classList.remove('open'));
+    document.addEventListener('click', (e) => { if (!settingsWrap.contains(e.target)) settingsWrap.classList.remove('open'); });
     $('#btn-apikeys').addEventListener('click', openApiKeysManager);
     $('#btn-backup').addEventListener('click', () => { window.location.href = '/api/backup'; });
     $('#btn-about').addEventListener('click', () => {

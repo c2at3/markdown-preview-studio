@@ -364,6 +364,50 @@ body {
   text-decoration: none;
 }
 .sidebar-icon-btn:hover { color: var(--text); }
+
+/* Settings gear: tap-open menu (icon + label per item) that pops up above the
+   footer. Same open/close-outside pattern as the other dropdowns. */
+.sidebar-footer { position: relative; }
+.settings-menu-wrap { display: flex; }
+.settings-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 10px;
+  right: 10px;
+  margin-bottom: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  z-index: 150;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+}
+.settings-menu-wrap.open .settings-menu { opacity: 1; visibility: visible; transform: translateY(0); }
+.settings-menu-wrap.open > .sidebar-icon-btn { color: var(--text); background: var(--bg-hover); }
+.settings-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.settings-menu-item svg { flex-shrink: 0; color: var(--text-3); }
+.settings-menu-item:hover { background: var(--bg-hover); color: var(--text); }
+.settings-menu-item:hover svg { color: var(--text); }
 .sidebar-link {
   color: var(--text-3);
   padding: 4px;
