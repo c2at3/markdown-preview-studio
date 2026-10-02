@@ -388,7 +388,8 @@ app.post('/api/files/upload', uploadFile.single('file'), async (req, res) => {
     icon = resolveIconKey(req.body.icon);
     iconColor = resolveColorName(req.body.color_file !== undefined ? req.body.color_file : req.body.icon_color, 'color_file');
     const folderColor = resolveColorName(req.body.color_folder, 'color_folder');
-    resolved = await resolveFolderPath(folder, auto_create !== false, folderColor);
+    // multipart form fields arrive as strings, so "false" must count too
+    resolved = await resolveFolderPath(folder, auto_create !== false && auto_create !== 'false', folderColor);
   } catch (e) {
     if (e.status) return res.status(e.status).json({ error: e.message });
     throw e;
