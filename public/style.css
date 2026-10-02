@@ -380,6 +380,10 @@ body {
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
   padding: 4px;
+  /* Stay inside the sidebar on short screens instead of running off the top. */
+  max-height: calc(100vh - 80px);
+  max-height: calc(100dvh - 80px);
+  overflow-y: auto;
   z-index: 150;
   opacity: 0;
   visibility: hidden;
