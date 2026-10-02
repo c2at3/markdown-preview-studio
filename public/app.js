@@ -272,8 +272,8 @@ graph TD
   // ===== Mermaid =====
   const MERMAID_FONT = '"Inter", "Segoe UI", "Roboto", "Noto Sans", sans-serif';
 
-  function initMermaid() {
-    const isDark = document.body.classList.contains('dark');
+  function initMermaid(forceLight) {
+    const isDark = !forceLight && document.body.classList.contains('dark');
     mermaid.initialize({
       startOnLoad: false, theme: isDark ? 'dark' : 'default',
       securityLevel: 'loose', suppressErrorRendering: true,
@@ -1979,11 +1979,163 @@ graph TD
     cm.focus(); scheduleRender(); scheduleSave();
   }
 
-  // ===== Export PDF =====
-  function exportPDF() {
+  // ===== Download: PDF / Markdown / HTML =====
+  // Always light-themed and free of UI chrome (copy/wrap/zoom buttons), so the
+  // output looks the same whether the app is in dark mode or not.
+  const EXPORT_CSS = [
+    '*{box-sizing:border-box}',
+    'html{-webkit-print-color-adjust:exact;print-color-adjust:exact}',
+    'body{margin:0;padding:32px 24px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,"Noto Sans",sans-serif;font-size:15px;line-height:1.7;color:#1f2328;background:#fff}',
+    '.md{max-width:820px;margin:0 auto;overflow-wrap:anywhere}',
+    // Page frame: the whole document sits in one table so its <thead> (the
+    // faint source/time stamp) repeats at the top of every printed page.
+    '.page-frame{width:100%;border-collapse:collapse;border:0}',
+    '.page-frame>thead>tr>th,.page-frame>tbody>tr>td{border:0;padding:0;background:none;text-align:inherit;font-weight:400;vertical-align:top}',
+    '.page-frame>tbody>tr{break-inside:auto}',
+    '.export-meta{max-width:820px;margin:0 auto;padding:0 0 14px;text-align:right;font-size:11px;font-style:italic;color:#9aa1a9}',
+    'h1,h2,h3,h4,h5,h6{line-height:1.3;margin:1.4em 0 .5em;font-weight:650;break-after:avoid}',
+    'h1{font-size:2em;border-bottom:1px solid #d8dee4;padding-bottom:.3em}',
+    'h2{font-size:1.5em;border-bottom:1px solid #d8dee4;padding-bottom:.3em}',
+    'h3{font-size:1.25em}h4{font-size:1.05em}',
+    'p,ul,ol,blockquote,table,.code-block-wrapper,.mermaid-rendered{margin:0 0 14px}',
+    'ul,ol{padding-left:1.6em}li>ul,li>ol{margin:0}',
+    'a{color:#0969da;text-decoration:none}',
+    'hr{border:0;border-top:1px solid #d8dee4;margin:22px 0}',
+    'blockquote{border-left:4px solid #d0d7de;padding:2px 0 2px 16px;color:#59636e}',
+    'img,svg{max-width:100%;height:auto}img{break-inside:avoid}',
+    'input[type=checkbox]{margin-right:6px}li:has(>input[type=checkbox]){list-style:none;margin-left:-1.3em}',
+    'code{font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",Menlo,monospace;font-size:.88em;background:#eff1f3;padding:.15em .4em;border-radius:4px}',
+    '.code-block-wrapper{border:1px solid #d0d7de;border-radius:8px;background:#f6f8fa;overflow:hidden}',
+    '.code-block-toolbar{display:flex;padding:5px 12px;border-bottom:1px solid #d8dee4;background:#eef1f4}',
+    '.code-block-lang{font-size:11px;font-weight:600;color:#59636e;text-transform:uppercase;letter-spacing:.04em}',
+    // Wrap instead of scroll/clip: a PDF can't scroll, so long lines must break or they get cut off.
+    'pre{margin:0;padding:12px 14px;background:transparent;border:0;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;tab-size:2}',
+    'pre code{display:block;background:none;padding:0;border-radius:0;font-size:12.5px;line-height:1.55;color:#1f2328;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere}',
+    '.md table{border-collapse:collapse;width:100%}',
+    '.md th,.md td{border:1px solid #d0d7de;padding:6px 12px;text-align:left;vertical-align:top;overflow-wrap:anywhere}',
+    '.md thead th{background:#f6f8fa}.md tr{break-inside:avoid}',
+    '.mermaid-rendered{text-align:center;break-inside:avoid}',
+    '.hljs-comment,.hljs-quote{color:#6e7781;font-style:italic}',
+    '.hljs-keyword,.hljs-selector-tag,.hljs-doctag,.hljs-template-tag,.hljs-type{color:#cf222e}',
+    '.hljs-string,.hljs-regexp,.hljs-addition,.hljs-meta .hljs-string{color:#0a3069}',
+    '.hljs-number,.hljs-literal,.hljs-attr,.hljs-variable,.hljs-template-variable,.hljs-selector-attr,.hljs-selector-class,.hljs-selector-pseudo,.hljs-meta{color:#0550ae}',
+    '.hljs-title,.hljs-title.function_,.hljs-section{color:#8250df}',
+    '.hljs-built_in,.hljs-symbol,.hljs-bullet,.hljs-link{color:#953800}',
+    '.hljs-name,.hljs-tag,.hljs-selector-id{color:#116329}',
+    '.hljs-attribute,.hljs-property{color:#0550ae}',
+    '.hljs-deletion{color:#82071e;background:#ffebe9}.hljs-addition{background:#dafbe1}',
+    '.hljs-emphasis{font-style:italic}.hljs-strong{font-weight:700}',
+    // Zero page margin: the browser's own header/footer (date, title, URL,
+    // page numbers) lives in the margin, so with no margin there's nowhere to
+    // print it. The visual margins come from side padding plus the repeating
+    // thead (top) / tfoot (bottom) spacers instead.
+    '@page{size:A4;margin:0}',
+    '.page-frame>tfoot>tr>td{border:0;padding:0}.page-foot{height:0}',
+    '@media print{body{padding:0 16mm}.md,.export-meta{max-width:none}.page-frame>thead>tr>th{padding-top:14mm}.page-foot{height:16mm}}'
+  ].join('\n');
+
+  function exportBaseName() {
+    return (fileNameInput.value || 'Untitled').trim().replace(/\.md$/i, '').replace(/[\\/:*?"<>|]+/g, '-') || 'Untitled';
+  }
+
+  function exportMeta() {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return 'Exported from ' + location.host + ' · ' + d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result); fr.onerror = reject;
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  // A cleaned copy of the rendered preview: no copy/wrap/zoom buttons, no
+  // zoom wrappers, absolute image URLs, and diagrams re-rendered in the light
+  // theme when the app is in dark mode (dark diagrams vanish on white paper).
+  async function buildExportBody({ inlineImages = false } = {}) {
+    const clone = preview.cloneNode(true);
+    clone.querySelectorAll('button, .code-block-actions, .media-zoom-btn').forEach((el) => el.remove());
+    clone.querySelectorAll('.media-wrapper').forEach((w) => w.replaceWith(...w.childNodes));
+    clone.querySelectorAll('[data-code]').forEach((el) => el.removeAttribute('data-code'));
+    clone.querySelectorAll('.wrapped-zoom, .wrapped').forEach((el) => el.classList.remove('wrapped-zoom', 'wrapped'));
+
+    if (document.body.classList.contains('dark')) {
+      initMermaid(true);
+      try {
+        for (const el of clone.querySelectorAll('.mermaid-rendered[data-mermaid]')) {
+          try {
+            const code = decodeURIComponent(el.getAttribute('data-mermaid'));
+            const { svg } = await mermaid.render('mmd-exp-' + Math.random().toString(36).slice(2, 7), code);
+            el.innerHTML = svg;
+          } catch (e) { /* keep the on-screen version */ }
+        }
+      } finally { initMermaid(); cleanupMermaidErrors(); }
+    }
+
+    for (const img of clone.querySelectorAll('img')) {
+      const abs = img.src;
+      img.setAttribute('src', abs);
+      if (inlineImages && !abs.startsWith('data:')) {
+        try {
+          const res = await fetch(abs, { credentials: 'include' });
+          if (res.ok) img.setAttribute('src', await blobToDataUrl(await res.blob()));
+        } catch (e) { /* leave the absolute URL */ }
+      }
+    }
+    return clone.innerHTML;
+  }
+
+  function buildExportDocument(title, bodyHtml) {
+    return '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<title>' + escapeHtml(title) + '</title><style>' + EXPORT_CSS + '</style></head><body>' +
+      '<table class="page-frame"><thead><tr><th><div class="export-meta">' + escapeHtml(exportMeta()) + '</div></th></tr></thead>' +
+      '<tfoot><tr><td><div class="page-foot"></div></td></tr></tfoot>' +
+      '<tbody><tr><td><article class="md">' + bodyHtml + '</article></td></tr></tbody></table></body></html>';
+  }
+
+  async function exportPDF() {
+    // Must open synchronously inside the click, before any await, or pop-up blockers refuse it.
     const w = window.open('', '_blank');
-    w.document.write(`<!DOCTYPE html><html><head><title>${escapeHtml(fileNameInput.value || 'Markdown')}</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;line-height:1.7;color:#1a1d21}h1,h2{border-bottom:1px solid #e5e7eb;padding-bottom:.25em}h1{font-size:2em}h2{font-size:1.5em}h3{font-size:1.25em}code{background:#f4f5f7;padding:.15em .4em;border-radius:4px;font-family:Consolas,monospace;font-size:.9em}pre{background:#f4f5f7;padding:16px;border-radius:8px;overflow-x:auto}pre code{background:none;padding:0}blockquote{border-left:3px solid #d1d5db;padding:2px 0 2px 16px;color:#5f6672;margin:0 0 14px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #e5e7eb;padding:8px 12px;text-align:left}thead th{background:#f8f9fb}img{max-width:100%}a{color:#3b82f6}@media print{body{padding:0}}</style></head><body>${preview.innerHTML}</body></html>`);
-    w.document.close(); setTimeout(() => w.print(), 500);
+    if (!w) { showToast('Allow pop-ups to download the PDF'); return; }
+    w.document.write('<!DOCTYPE html><title>Preparing PDF</title><p style="font:14px sans-serif;color:#666;padding:24px">Preparing PDF…</p>');
+    try {
+      const body = await buildExportBody();
+      w.document.open();
+      w.document.write(buildExportDocument(exportBaseName(), body));
+      w.document.close();
+      const pending = [...w.document.images].filter((i) => !i.complete)
+        .map((i) => new Promise((r) => { i.onload = i.onerror = r; }));
+      await Promise.race([Promise.all(pending), new Promise((r) => setTimeout(r, 4000))]);
+      setTimeout(() => { w.focus(); w.print(); }, 200);
+    } catch (e) {
+      w.close();
+      showToast('Could not build the PDF');
+    }
+  }
+
+  function exportMarkdown() {
+    downloadBlob(new Blob([cm.getValue()], { type: 'text/markdown;charset=utf-8' }), exportBaseName() + '.md');
+  }
+
+  async function exportHTML() {
+    try {
+      const body = await buildExportBody({ inlineImages: true });
+      downloadBlob(new Blob([buildExportDocument(exportBaseName(), body)], { type: 'text/html;charset=utf-8' }), exportBaseName() + '.html');
+    } catch (e) {
+      showToast('Could not build the HTML file');
+    }
   }
 
   // ===== Utilities =====
@@ -2150,7 +2302,13 @@ graph TD
     $('#btn-copy-html').addEventListener('click', () => navigator.clipboard.writeText(preview.innerHTML).then(() => showToast('HTML copied')));
     $('#btn-find').addEventListener('click', () => toggleFindPanel());
     $('#btn-share').addEventListener('click', () => shareCurrentFile());
-    $('#btn-export').addEventListener('click', exportPDF);
+    // Same tap-open pattern as the layout dropdown (hover alone doesn't exist on touch).
+    const downloadControl = $('#download-control');
+    $('#btn-export').addEventListener('click', (e) => { e.stopPropagation(); downloadControl.classList.toggle('open'); });
+    document.addEventListener('click', (e) => { if (!downloadControl.contains(e.target)) downloadControl.classList.remove('open'); });
+    [['#dl-pdf', exportPDF], ['#dl-md', exportMarkdown], ['#dl-html', exportHTML]].forEach(([sel, fn]) => {
+      $(sel).addEventListener('click', (e) => { e.currentTarget.blur(); downloadControl.classList.remove('open'); fn(); });
+    });
     $('#mt-dark-toggle').addEventListener('click', () => applyDark(!document.body.classList.contains('dark')));
 
     // Mobile tools drawer (find/dark/share/PDF/sync/layout) - tap the "more
