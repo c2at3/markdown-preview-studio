@@ -158,10 +158,11 @@ app.use('/api', async (req, res, next) => {
     // stays reachable only via a logged-in session (the app's own web UI).
     const isAllowedCall =
       (apiPath === '/files/upload' && (req.method === 'POST' || req.method === 'DELETE')) ||
+      (apiPath === '/images/upload' && req.method === 'POST') ||
       (apiPath === '/files/list' && req.method === 'GET') ||
       (apiPath === '/files/view' && req.method === 'GET');
     if (!isAllowedCall) {
-      return res.status(403).json({ error: 'This API key can only be used with POST/DELETE /api/files/upload, GET /api/files/list, or GET /api/files/view' });
+      return res.status(403).json({ error: 'This API key can only be used with POST/DELETE /api/files/upload, POST /api/images/upload, GET /api/files/list, or GET /api/files/view' });
     }
     req.user = { id: 'api:' + key.id, username: key.name, role: 'admin' };
     req.apiKey = key;
@@ -747,6 +748,12 @@ function validateMagicBytes(buf, ext) {
   return true;
 }
 
+function writeImage(buf, type) {
+  const name = nanoid(10) + '.' + (type === 'jpeg' ? 'jpg' : type);
+  fs.writeFileSync(path.join(UPLOAD_DIR, name), buf);
+  return name;
+}
+
 app.post('/api/upload', (req, res) => {
   const { data } = req.body;
   if (!data || typeof data !== 'string') return res.status(400).json({ error: 'No data' });
@@ -759,12 +766,43 @@ app.post('/api/upload', (req, res) => {
   if (!buf.length) return res.status(400).json({ error: 'Empty file' });
   if (buf.length > MAX_IMAGE_SIZE) return res.status(413).json({ error: 'Max 5MB' });
   if (!validateMagicBytes(buf, claimedType)) return res.status(400).json({ error: 'Content mismatch' });
-  const ext = claimedType === 'jpeg' ? 'jpg' : claimedType;
-  const name = nanoid(10) + '.' + ext;
-  const filePath = path.join(UPLOAD_DIR, name);
-  if (!filePath.startsWith(UPLOAD_DIR)) return res.status(400).json({ error: 'Invalid path' });
-  fs.writeFileSync(filePath, buf);
+  const name = writeImage(buf, claimedType);
   res.json({ url: '/uploads/' + name, name });
+});
+
+// Public API-key endpoint: same storage as /api/upload, but takes a real
+// multipart file (or a data-URI JSON body) and sniffs the type from the bytes
+// instead of trusting a claimed one. The returned id is the stored filename;
+// the image is then served publicly at /uploads/<id>.
+const uploadImage = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_IMAGE_SIZE } });
+
+function sniffImageType(buf) {
+  return ['png', 'jpg', 'gif', 'webp'].find((t) => validateMagicBytes(buf, t)) || null;
+}
+
+app.post('/api/images/upload', uploadImage.single('file'), (req, res) => {
+  let buf;
+  if (req.file) {
+    buf = req.file.buffer;
+  } else if (typeof req.body.data === 'string') {
+    const m = req.body.data.match(/^data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+)$/);
+    if (!m) return res.status(400).json({ error: 'Invalid image data: expected a data:image/...;base64,... URI' });
+    buf = Buffer.from(m[1], 'base64');
+  } else {
+    return res.status(400).json({ error: 'No image: send a "file" (multipart/form-data) or a "data" data-URI (JSON)' });
+  }
+  if (!buf.length) return res.status(400).json({ error: 'Empty file' });
+  if (buf.length > MAX_IMAGE_SIZE) return res.status(413).json({ error: 'Image too large (max 5MB)' });
+  const type = sniffImageType(buf);
+  if (!type) return res.status(400).json({ error: 'Unsupported or corrupt image (png, jpg, gif and webp only)' });
+  const id = writeImage(buf, type);
+  const url = '/uploads/' + id;
+  res.status(201).json({
+    id, url,
+    full_url: req.protocol + '://' + req.get('host') + url,
+    markdown: '![](' + url + ')',
+    type: type, size: buf.length
+  });
 });
 
 // ===== SPA =====
@@ -787,7 +825,9 @@ app.use((err, req, res, next) => {
     return res.status(400).json({ error: 'Invalid JSON body' });
   }
   if (err instanceof multer.MulterError) {
-    if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Uploaded file too large (max 10mb)' });
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: req.path === '/api/images/upload' ? 'Image too large (max 5MB)' : 'Uploaded file too large (max 10mb)' });
+    }
     return res.status(400).json({ error: `Upload error: ${err.message}` });
   }
   console.error('[unhandled error]', err);
