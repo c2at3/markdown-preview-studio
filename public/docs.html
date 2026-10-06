@@ -59,7 +59,7 @@
   <div class="docs-header">
     <a class="back" href="/"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Back to app</a>
     <h1>API Documentation</h1>
-    <p>A small set of endpoints for third-party tools to create, update, delete, list, and read notes in Markdown Preview Studio.</p>
+    <p>A small set of endpoints for third-party tools to create, update, delete, list, and read notes, and upload images, in Markdown Preview Studio.</p>
   </div>
 
   <div class="docs-nav">
@@ -67,6 +67,7 @@
     <a href="#endpoints">Create, update &amp; delete</a>
     <a href="#list">List everything</a>
     <a href="#view">Read a file</a>
+    <a href="#images">Upload an image</a>
     <a href="#icons">Icons &amp; colors</a>
     <a href="#errors">Errors</a>
   </div>
@@ -178,6 +179,49 @@
     </div>
   </section>
 
+  <section class="docs-section" id="images">
+    <h2>Upload an image</h2>
+    <p class="endpoint-desc">Stores one image - or up to <strong>10 at once</strong> - and returns each one's <strong>id</strong>. The id is the stored filename, and the image is then served publicly at <code>/uploads/&lt;id&gt;</code> - so you can embed it in any note with <code>![](/uploads/&lt;id&gt;)</code>. Accepted formats: <strong>PNG, JPEG, GIF, WebP</strong>, up to <strong>5MB</strong>. The format is detected from the file's actual bytes, not its name or <code>Content-Type</code>, so a mislabeled or non-image file is rejected.</p>
+    <div class="endpoint-head"><span class="method post">POST</span><span class="endpoint-path">/api/images/upload</span></div>
+    <table class="field-table">
+      <tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+      <tr><td><code>file</code></td><td>file</td><td>The image, as <code>multipart/form-data</code>. To upload several, repeat the field - up to <strong>10</strong> <code>file</code> parts, each up to 5MB. Required unless you send <code>data</code></td></tr>
+      <tr><td><code>data</code></td><td>string or array</td><td>Alternative to <code>file</code>, in a JSON body: a base64 data URI such as <code>"data:image/png;base64,iVBORw0..."</code>, or an array of up to 10 of them. The whole JSON body is capped at 10MB, so prefer <code>file</code> for large or many images</td></tr>
+    </table>
+    <div class="code-block">
+      <pre><code id="ex-image"></code></pre>
+      <button class="copy-btn" data-example="image">Copy</button>
+    </div>
+    <p class="endpoint-desc">Several images in one request - repeat <code>-F file=@...</code> (up to 10):</p>
+    <div class="code-block">
+      <pre><code id="ex-images"></code></pre>
+      <button class="copy-btn" data-example="images">Copy</button>
+    </div>
+    <p class="endpoint-desc">Response (<code>201</code>) - keep <code>id</code> to reference the image later; <code>markdown</code> is ready to paste into a note. The <code>images</code> array is always present, in the same order you sent the files. When you send exactly one image, its fields are also repeated at the top level, so <code>id</code> is right there:</p>
+    <div class="code-block">
+      <pre><code>{ "id": "Ab3dE9fGhI.png", "url": "/uploads/Ab3dE9fGhI.png",
+  "full_url": "https://your-host/uploads/Ab3dE9fGhI.png",
+  "markdown": "![](/uploads/Ab3dE9fGhI.png)", "type": "png", "size": 20481,
+  "images": [ { "id": "Ab3dE9fGhI.png", ... } ], "count": 1 }</code></pre>
+    </div>
+    <p class="endpoint-desc">With two or more images there are no top-level image fields, only the list:</p>
+    <div class="code-block">
+      <pre><code>{ "images": [
+    { "id": "Ab3dE9fGhI.png", "url": "/uploads/Ab3dE9fGhI.png", "full_url": "...", "markdown": "![](/uploads/Ab3dE9fGhI.png)", "type": "png", "size": 20481 },
+    { "id": "Zk81QpLmNo.jpg", "url": "/uploads/Zk81QpLmNo.jpg", "full_url": "...", "markdown": "![](/uploads/Zk81QpLmNo.jpg)", "type": "jpg", "size": 90312 }
+  ], "count": 2 }</code></pre>
+    </div>
+    <div class="note-box">A batch is <strong>all or nothing</strong>: every image is checked first, and if any one is invalid, oversized, or there are more than 10, the request fails (the error names the offending file) and <strong>none</strong> are stored - so you never have to work out which ones landed. Limits per request: <strong>10 images</strong>, <strong>5MB each</strong> (so up to 50MB in total when sent as multipart files).</div>
+    <p class="endpoint-desc">Use it in a note by putting the <code>markdown</code> value in the <code>content</code> you send to <code>/api/files/upload</code>:</p>
+    <div class="code-block">
+      <pre><code>{ "folder": "TEST/Bug bounty", "filename": "Report 001 - XSS",
+  "content": "# Report 001
+
+![](/uploads/Ab3dE9fGhI.png)" }</code></pre>
+    </div>
+    <div class="note-box">Uploaded images are public to anyone who has the link (that is how they display inside shared notes), and the id is unguessable but not secret. There is no endpoint to delete an uploaded image.</div>
+  </section>
+
   <section class="docs-section" id="icons">
     <h2>Icons &amp; colors</h2>
     <p>Valid values for <code>icon</code>:</p>
@@ -195,11 +239,11 @@
     </div>
     <table class="field-table">
       <tr><th>Status</th><th>Meaning</th></tr>
-      <tr><td><code>400</code></td><td>No <code>filename</code> and no uploaded <code>file</code> to default it from; an <code>icon</code>/<code>color_file</code>/<code>color_folder</code> outside the fixed set below; malformed JSON; or nothing to delete</td></tr>
+      <tr><td><code>400</code></td><td>No <code>filename</code> and no uploaded <code>file</code> to default it from; an <code>icon</code>/<code>color_file</code>/<code>color_folder</code> outside the fixed set below; malformed JSON; nothing to delete; or, for <code>/api/images/upload</code>, no image, an empty or non-PNG/JPEG/GIF/WebP file, or more than 10 images (the whole request is rejected)</td></tr>
       <tr><td><code>401</code></td><td>Missing or invalid API key</td></tr>
-      <tr><td><code>403</code></td><td>Called a URL other than <code>/api/files/upload</code>, <code>/api/files/list</code>, or <code>/api/files/view</code></td></tr>
+      <tr><td><code>403</code></td><td>Called a URL other than <code>/api/files/upload</code>, <code>/api/images/upload</code>, <code>/api/files/list</code>, or <code>/api/files/view</code></td></tr>
       <tr><td><code>404</code></td><td><code>auto_create: false</code> and the folder path doesn't fully exist yet, or deleting/reading a file/folder that doesn't exist</td></tr>
-      <tr><td><code>413</code></td><td>Request body, or uploaded <code>file</code>, over <strong>10MB</strong> - see the note below</td></tr>
+      <tr><td><code>413</code></td><td>Request body, or uploaded <code>file</code>, over <strong>10MB</strong> (any single image: over <strong>5MB</strong>) - see the note below</td></tr>
     </table>
     <div class="warn-box"><strong>Request size limit: 10MB.</strong> A <code>content</code> value or uploaded <code>file</code> that pushes the request past 10MB is rejected with <code>413</code>. There's no way to upload a larger note in one call - split it into multiple files instead.</div>
   </section>
@@ -254,6 +298,8 @@ var EXAMPLES = {
   createFile: { method: 'POST', path: '/api/files/upload', form: {
     folder: 'TEST/Bug bounty', icon: 'bug', color_file: 'red'
   }, fileField: 'file', fileName: 'report.md' },
+  image: { method: 'POST', path: '/api/images/upload', form: {}, fileField: 'file', fileName: 'screenshot.png' },
+  images: { method: 'POST', path: '/api/images/upload', form: {}, fileField: 'file', fileNames: ['screenshot1.png', 'screenshot2.jpg', 'diagram.webp'] },
   deleteFile: { method: 'DELETE', path: '/api/files/upload', body: {
     folder: 'TEST/Bug bounty', filename: 'Report 001 - XSS'
   } },
@@ -277,7 +323,7 @@ function urlFor(ex) {
 // field plus the uploaded file itself, in curl's "-F name=@path" form.
 function formFlags(ex, sep) {
   var flags = Object.keys(ex.form).map(function (k) { return '-F "' + k + '=' + ex.form[k] + '"'; });
-  if (ex.fileField) flags.push('-F "' + ex.fileField + '=@' + ex.fileName + '"');
+  (ex.fileNames || (ex.fileField ? [ex.fileName] : [])).forEach(function (n) { flags.push('-F "' + ex.fileField + '=@' + n + '"'); });
   return flags.join(sep);
 }
 function prettyCurl(ex) {
@@ -301,6 +347,8 @@ function oneLineCurl(ex) {
 
 document.getElementById('ex-create').textContent = prettyCurl(EXAMPLES.create);
 document.getElementById('ex-create-file').textContent = prettyCurl(EXAMPLES.createFile);
+document.getElementById('ex-image').textContent = prettyCurl(EXAMPLES.image);
+document.getElementById('ex-images').textContent = prettyCurl(EXAMPLES.images);
 document.getElementById('ex-delete-file').textContent = prettyCurl(EXAMPLES.deleteFile);
 document.getElementById('ex-delete-folder').textContent = prettyCurl(EXAMPLES.deleteFolder);
 document.getElementById('ex-list').textContent = prettyCurl(EXAMPLES.list);
