@@ -770,39 +770,58 @@ app.post('/api/upload', (req, res) => {
   res.json({ url: '/uploads/' + name, name });
 });
 
-// Public API-key endpoint: same storage as /api/upload, but takes a real
-// multipart file (or a data-URI JSON body) and sniffs the type from the bytes
-// instead of trusting a claimed one. The returned id is the stored filename;
-// the image is then served publicly at /uploads/<id>.
-const uploadImage = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_IMAGE_SIZE } });
+// Public API-key endpoint: same storage as /api/upload, but takes real
+// multipart files (or data-URIs in a JSON body), up to 10 per request, and
+// sniffs each type from the bytes instead of trusting a claimed one. The
+// returned id is the stored filename; the image is then served publicly at
+// /uploads/<id>.
+const MAX_IMAGES_PER_REQUEST = 10;
+const uploadImages = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_IMAGE_SIZE } });
+const DATA_URI_RE = /^data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+)$/;
 
 function sniffImageType(buf) {
   return ['png', 'jpg', 'gif', 'webp'].find((t) => validateMagicBytes(buf, t)) || null;
 }
 
-app.post('/api/images/upload', uploadImage.single('file'), (req, res) => {
-  let buf;
-  if (req.file) {
-    buf = req.file.buffer;
-  } else if (typeof req.body.data === 'string') {
-    const m = req.body.data.match(/^data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+)$/);
-    if (!m) return res.status(400).json({ error: 'Invalid image data: expected a data:image/...;base64,... URI' });
-    buf = Buffer.from(m[1], 'base64');
-  } else {
-    return res.status(400).json({ error: 'No image: send a "file" (multipart/form-data) or a "data" data-URI (JSON)' });
+app.post('/api/images/upload', uploadImages.array('file', MAX_IMAGES_PER_REQUEST), (req, res) => {
+  // Normalise both input styles into [{ buf, label }].
+  const inputs = [];
+  if (req.files && req.files.length) {
+    req.files.forEach((f) => inputs.push({ buf: f.buffer, label: f.originalname }));
+  } else if (req.body.data !== undefined) {
+    const list = Array.isArray(req.body.data) ? req.body.data : [req.body.data];
+    if (list.length > MAX_IMAGES_PER_REQUEST) return res.status(400).json({ error: 'Too many images (max ' + MAX_IMAGES_PER_REQUEST + ' per request)' });
+    for (let i = 0; i < list.length; i++) {
+      const m = typeof list[i] === 'string' && list[i].match(DATA_URI_RE);
+      if (!m) return res.status(400).json({ error: (list.length > 1 ? 'data[' + i + ']: ' : '') + 'Invalid image data: expected a data:image/...;base64,... URI' });
+      inputs.push({ buf: Buffer.from(m[1], 'base64'), label: 'data[' + i + ']' });
+    }
   }
-  if (!buf.length) return res.status(400).json({ error: 'Empty file' });
-  if (buf.length > MAX_IMAGE_SIZE) return res.status(413).json({ error: 'Image too large (max 5MB)' });
-  const type = sniffImageType(buf);
-  if (!type) return res.status(400).json({ error: 'Unsupported or corrupt image (png, jpg, gif and webp only)' });
-  const id = writeImage(buf, type);
-  const url = '/uploads/' + id;
-  res.status(201).json({
-    id, url,
-    full_url: req.protocol + '://' + req.get('host') + url,
-    markdown: '![](' + url + ')',
-    type: type, size: buf.length
+  if (!inputs.length) {
+    return res.status(400).json({ error: 'No image: send one or more "file" parts (multipart/form-data), or "data" as a data-URI / array of data-URIs (JSON)' });
+  }
+
+  // Validate everything first so one bad image can't leave the others stored
+  // with no way for the caller to know which ones landed.
+  const checked = [];
+  for (const { buf, label } of inputs) {
+    const where = inputs.length > 1 ? label + ': ' : '';
+    if (!buf.length) return res.status(400).json({ error: where + 'Empty file' });
+    if (buf.length > MAX_IMAGE_SIZE) return res.status(413).json({ error: where + 'Image too large (max 5MB)' });
+    const type = sniffImageType(buf);
+    if (!type) return res.status(400).json({ error: where + 'Unsupported or corrupt image (png, jpg, gif and webp only)' });
+    checked.push({ buf, type });
+  }
+
+  const base = req.protocol + '://' + req.get('host');
+  const images = checked.map(({ buf, type }) => {
+    const id = writeImage(buf, type);
+    const url = '/uploads/' + id;
+    return { id, url, full_url: base + url, markdown: '![](' + url + ')', type, size: buf.length };
   });
+  // "images" is always present; a single upload also repeats its fields at the
+  // top level, so the one-image case stays a one-liner for callers.
+  res.status(201).json(images.length === 1 ? { ...images[0], images, count: 1 } : { images, count: images.length });
 });
 
 // ===== SPA =====
@@ -827,6 +846,9 @@ app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
       return res.status(413).json({ error: req.path === '/api/images/upload' ? 'Image too large (max 5MB)' : 'Uploaded file too large (max 10mb)' });
+    }
+    if (err.code === 'LIMIT_UNEXPECTED_FILE' && req.path === '/api/images/upload') {
+      return res.status(400).json({ error: 'Too many images, or a file in the wrong field: send up to ' + MAX_IMAGES_PER_REQUEST + ' files, each in a "file" field' });
     }
     return res.status(400).json({ error: `Upload error: ${err.message}` });
   }
