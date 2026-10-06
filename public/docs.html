@@ -211,7 +211,7 @@
     { "id": "Zk81QpLmNo.jpg", "url": "/uploads/Zk81QpLmNo.jpg", "full_url": "...", "markdown": "![](/uploads/Zk81QpLmNo.jpg)", "type": "jpg", "size": 90312 }
   ], "count": 2 }</code></pre>
     </div>
-    <div class="note-box">A batch is <strong>all or nothing</strong>: every image is checked first, and if any one is invalid, oversized, or there are more than 10, the request fails (the error names the offending file) and <strong>none</strong> are stored - so you never have to work out which ones landed.</div>
+    <div class="note-box">A batch is <strong>all or nothing</strong>: every image is checked first, and if any one is invalid, oversized, or there are more than 10, the request fails (the error names the offending file) and <strong>none</strong> are stored - so you never have to work out which ones landed. Limits per request: <strong>10 images</strong>, <strong>5MB each</strong> (so up to 50MB in total when sent as multipart files).</div>
     <p class="endpoint-desc">Use it in a note by putting the <code>markdown</code> value in the <code>content</code> you send to <code>/api/files/upload</code>:</p>
     <div class="code-block">
       <pre><code>{ "folder": "TEST/Bug bounty", "filename": "Report 001 - XSS",
