@@ -7,6 +7,7 @@ const archiver = require('archiver');
 const { nanoid } = require('nanoid');
 const db = require('./lib/db');
 const auth = require('./lib/auth');
+const { createMcpHandler } = require('./lib/mcp');
 const { authRateLimiter } = require('./lib/ratelimit');
 
 const app = express();
@@ -141,6 +142,12 @@ app.get('/setup.html', async (req, res, next) => {
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache')
 }));
+
+// ===== MCP (Model Context Protocol) =====
+// API-key auth is handled inside the handler; the tools call the /api routes
+// below with that same key, so they can never exceed what the key may do.
+app.post('/mcp', createMcpHandler({ port: PORT, version: require('./package.json').version, validateApiKey: auth.validateApiKey }));
+app.all('/mcp', (req, res) => res.status(405).set('Allow', 'POST').json({ error: 'This MCP endpoint only supports POST (Streamable HTTP with JSON responses)' }));
 
 // ===== AUTH MIDDLEWARE =====
 app.use('/api', async (req, res, next) => {

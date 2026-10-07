@@ -59,7 +59,7 @@
   <div class="docs-header">
     <a class="back" href="/"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Back to app</a>
     <h1>API Documentation</h1>
-    <p>A small set of endpoints for third-party tools to create, update, delete, list, and read notes, and upload images, in Markdown Preview Studio.</p>
+    <p>A small set of endpoints for third-party tools to create, update, delete, list, and read notes, and upload images, in Markdown Preview Studio - plus an <a href="#mcp">MCP server</a> so AI assistants can do the same.</p>
   </div>
 
   <div class="docs-nav">
@@ -68,6 +68,7 @@
     <a href="#list">List everything</a>
     <a href="#view">Read a file</a>
     <a href="#images">Upload an image</a>
+    <a href="#mcp">MCP server</a>
     <a href="#icons">Icons &amp; colors</a>
     <a href="#errors">Errors</a>
   </div>
@@ -222,6 +223,59 @@
     <div class="note-box">Uploaded images are public to anyone who has the link (that is how they display inside shared notes), and the id is unguessable but not secret. There is no endpoint to delete an uploaded image.</div>
   </section>
 
+  <section class="docs-section" id="mcp">
+    <h2>MCP server</h2>
+    <p class="endpoint-desc">The same notes and images are available to AI assistants through the <strong>Model Context Protocol</strong>, so Claude and other MCP clients can read and write your notes directly instead of calling the REST API by hand. It uses the <strong>same API key</strong> and has exactly the same permissions - every tool calls the endpoints documented above on your behalf.</p>
+    <div class="endpoint-head"><span class="method post">POST</span><span class="endpoint-path">/mcp</span></div>
+    <p class="endpoint-desc">Streamable HTTP transport with JSON responses (protocol versions 2025-06-18, 2025-03-26 and 2024-11-05). <code>GET /mcp</code> returns <code>405</code>.</p>
+
+    <h3>Connect</h3>
+    <p class="endpoint-desc">Claude Code:</p>
+    <div class="code-block">
+      <pre><code id="ex-mcp-cmd"></code></pre>
+      <button class="copy-btn" data-copy="ex-mcp-cmd">Copy</button>
+    </div>
+    <p class="endpoint-desc">Any client that takes a JSON config (Claude Desktop, Cursor, ...):</p>
+    <div class="code-block">
+      <pre><code id="ex-mcp-json"></code></pre>
+      <button class="copy-btn" data-copy="ex-mcp-json">Copy</button>
+    </div>
+
+    <h3>Tools</h3>
+    <table class="field-table">
+      <tr><th>Tool</th><th>What it does</th></tr>
+      <tr><td><code>list_files</code></td><td>Every folder and file (no content) - same as <code>GET /api/files/list</code></td></tr>
+      <tr><td><code>read_file</code></td><td>Read one note: <code>filename</code>, optional <code>folder</code></td></tr>
+      <tr><td><code>write_file</code></td><td>Create or overwrite a note in place: <code>filename</code>, optional <code>folder</code>, <code>content</code>, <code>icon</code>, <code>color_file</code>, <code>color_folder</code>, <code>auto_create</code></td></tr>
+      <tr><td><code>delete_file</code></td><td>Delete a note (<code>filename</code>, optional <code>folder</code>)</td></tr>
+      <tr><td><code>delete_folder</code></td><td>Delete the last folder of a path and its sub-folders (notes are moved to the root, never deleted)</td></tr>
+      <tr><td><code>upload_images</code></td><td>Upload 1-10 images given as base64 data URIs; returns ids and ready-to-paste Markdown</td></tr>
+      <tr><td><code>create_vuln_report</code></td><td>File a vulnerability report with the right icon and colour - see below</td></tr>
+    </table>
+    <p class="endpoint-desc">A failed call comes back as a normal tool result with <code>isError: true</code> and the API's own message (for example <code>Error 404: ...</code>), so the assistant can read it and correct itself.</p>
+
+    <h3>Vulnerability reports</h3>
+    <p class="endpoint-desc"><code>create_vuln_report</code> takes a <code>title</code>, a <code>severity</code>, whether it is <code>verified</code>, an optional <code>folder</code> and optional <code>content</code>, and picks the icon and colour itself:</p>
+    <table class="field-table">
+      <tr><th></th><th>Verified</th><th>Not yet verified</th></tr>
+      <tr><td>Icon</td><td><code>bug</code></td><td><code>warning</code></td></tr>
+    </table>
+    <table class="field-table">
+      <tr><th>Severity</th><th>Colour</th></tr>
+      <tr><td><code>critical</code></td><td><span class="swatch" style="background:#a855f7;display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px"></span>purple</td></tr>
+      <tr><td><code>high</code></td><td><span class="swatch" style="background:#ef4444;display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px"></span>red</td></tr>
+      <tr><td><code>medium</code></td><td><span class="swatch" style="background:#f97316;display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px"></span>orange</td></tr>
+      <tr><td><code>low</code></td><td><span class="swatch" style="background:#22c55e;display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px"></span>green</td></tr>
+      <tr><td><code>info</code></td><td><span class="swatch" style="background:#6b7280;display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px"></span>gray</td></tr>
+    </table>
+    <ul class="docs-list">
+      <li>Leave <code>content</code> out on a new report and a standard template is created (Summary, Affected asset, Steps to reproduce, Impact, Remediation, References) with the <code>Severity</code> and <code>Status</code> lines filled in.</li>
+      <li>Calling it again for the same <code>title</code> and <code>folder</code> <strong>updates</strong> that report. With no <code>content</code> it only re-triages: the icon and colour change, the <code>**Severity:**</code> / <code>**Status:**</code> lines are kept in step, and the rest of the text is untouched - for example to mark a finding verified, or change its severity, after you have tested it.</li>
+      <li>Pass <code>content</code> to write the whole report yourself; it is stored exactly as given.</li>
+    </ul>
+    <div class="note-box">Try asking your assistant: <em>"File a high-severity, verified stored XSS in the comments form under the folder Acme/Web."</em></div>
+  </section>
+
   <section class="docs-section" id="icons">
     <h2>Icons &amp; colors</h2>
     <p>Valid values for <code>icon</code>:</p>
@@ -353,6 +407,23 @@ document.getElementById('ex-delete-file').textContent = prettyCurl(EXAMPLES.dele
 document.getElementById('ex-delete-folder').textContent = prettyCurl(EXAMPLES.deleteFolder);
 document.getElementById('ex-list').textContent = prettyCurl(EXAMPLES.list);
 document.getElementById('ex-view').textContent = prettyCurl(EXAMPLES.view);
+
+document.getElementById('ex-mcp-cmd').textContent =
+  'claude mcp add --transport http markdown-studio ' + location.origin + '/mcp \\\n  --header "Authorization: Bearer mdpk_YOUR_KEY"';
+document.getElementById('ex-mcp-json').textContent = JSON.stringify({
+  mcpServers: { 'markdown-studio': { type: 'http', url: location.origin + '/mcp', headers: { Authorization: 'Bearer mdpk_YOUR_KEY' } } }
+}, null, 2);
+
+document.querySelectorAll('.copy-btn[data-copy]').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    navigator.clipboard.writeText(document.getElementById(btn.dataset.copy).textContent).then(function () {
+      var original = btn.textContent;
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(function () { btn.textContent = original; btn.classList.remove('copied'); }, 1600);
+    });
+  });
+});
 
 document.querySelectorAll('.copy-btn[data-example]').forEach(function (btn) {
   btn.addEventListener('click', function () {
