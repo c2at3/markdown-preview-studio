@@ -1105,7 +1105,13 @@ graph TD
       const action = e.target.closest('[data-action]')?.dataset.action;
       if (action === 'delete-folder') { e.stopPropagation(); if (confirm('Delete folder "' + folder.name + '"?')) { await api.deleteFolder(folder.id); await loadAll(); } return; }
       if (action === 'add-file') { e.stopPropagation(); const file = await api.createFile('Untitled', '', folder.id); await loadAll(); await switchFile(file.id); fileNameInput.focus(); fileNameInput.select(); return; }
-      folder.collapsed = !folder.collapsed; await api.updateFolder(folder.id, { collapsed: !folder.collapsed }); renderSidebar();
+      // Flip once, then both draw and save that same value. (This used to flip
+      // first and then save the negation, so the server always held the
+      // previous state and a refresh showed folders open/closed backwards.)
+      const nowCollapsed = !folder.collapsed;
+      folder.collapsed = nowCollapsed;
+      renderSidebar();
+      await api.updateFolder(folder.id, { collapsed: nowCollapsed });
     });
     header.addEventListener('dblclick', (e) => {
       e.stopPropagation();
