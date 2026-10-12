@@ -27,6 +27,7 @@
   --shadow: 0 2px 8px rgba(0,0,0,0.06);
   --shadow-lg: 0 8px 30px rgba(0,0,0,0.1);
   --code-bg: #f4f5f7;
+  --inline-code: #d2042d; /* cherry red */
   --blockquote-bar: #d1d5db;
   --table-border: #e5e7eb;
   --table-stripe: #f9fafb;
@@ -56,6 +57,7 @@ body.dark {
   --shadow: 0 2px 8px rgba(0,0,0,0.3);
   --shadow-lg: 0 8px 30px rgba(0,0,0,0.4);
   --code-bg: #1e2028;
+  --inline-code: #ff6b81; /* cherry red, lightened for dark backgrounds */
   --blockquote-bar: #3b4252;
   --table-border: #2a2f38;
   --table-stripe: #1e2028;
@@ -1157,6 +1159,10 @@ body.dark .cm-attribute { color: #ffcb6b; }
 .markdown-body li { margin-bottom: 3px; }
 .markdown-body li > ul, .markdown-body li > ol { margin-bottom: 0; margin-top: 3px; }
 
+/* Inline `code` only (code blocks keep their syntax-highlight colours). */
+.markdown-body :not(pre) > code {
+  color: var(--inline-code);
+}
 .markdown-body code {
   background: var(--code-bg);
   padding: 0.15em 0.45em;
