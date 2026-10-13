@@ -19,6 +19,28 @@
     fileNameInput.title = fileNameInput.scrollWidth > fileNameInput.clientWidth ? fileNameInput.value : '';
   });
 
+  // Tooltip with the full name, only when the sidebar row's name is actually
+  // cut off by its ellipsis (so short names don't get a pointless tooltip).
+  fileList.addEventListener('mouseover', (e) => {
+    const row = e.target.closest('.file-item, .folder-header');
+    if (!row) return;
+    const nameEl = row.querySelector('.file-item-name, .folder-name');
+    row.title = nameEl && nameEl.scrollWidth > nameEl.clientWidth ? nameEl.textContent : '';
+  });
+
+  // ===== Sidebar width (desktop): drag the right edge, remembered across reloads =====
+  const SIDEBAR_MIN_W = 180;
+  const sidebarMaxW = () => Math.min(640, Math.round(window.innerWidth * 0.6));
+  function applyStoredSidebarWidth() {
+    const root = document.documentElement.style;
+    const saved = parseInt(localStorage.getItem('md-sidebar-w'), 10);
+    // Phones keep the fixed overlay width; only desktop honours the saved one.
+    if (window.innerWidth <= 768 || !saved) { root.removeProperty('--sidebar-w'); return; }
+    root.setProperty('--sidebar-w', Math.max(SIDEBAR_MIN_W, Math.min(saved, sidebarMaxW())) + 'px');
+  }
+  applyStoredSidebarWidth();
+  window.addEventListener('resize', applyStoredSidebarWidth);
+
   // ===== Sidebar open/close (mobile: dims the page behind it, tap it to close) =====
   // On mobile the "<<" button cycles collapsed -> open -> full -> collapsed
   // instead of only collapsing, so long file/folder names have a wider state
@@ -1108,10 +1130,14 @@ graph TD
       // Flip once, then both draw and save that same value. (This used to flip
       // first and then save the negation, so the server always held the
       // previous state and a refresh showed folders open/closed backwards.)
-      const nowCollapsed = !folder.collapsed;
-      folder.collapsed = nowCollapsed;
+      folder.collapsed = !folder.collapsed;
       renderSidebar();
-      await api.updateFolder(folder.id, { collapsed: nowCollapsed });
+      // Saves for one folder run one after another and each sends the value
+      // as it is *then*: two quick clicks (e.g. the double-click that starts a
+      // rename) can't arrive out of order and leave the server on the older one.
+      const prev = folder._saving || Promise.resolve();
+      folder._saving = prev.then(() => api.updateFolder(folder.id, { collapsed: folder.collapsed })).catch(() => {});
+      await folder._saving;
     });
     header.addEventListener('dblclick', (e) => {
       e.stopPropagation();
@@ -2232,6 +2258,35 @@ graph TD
     });
     $('#btn-new-folder').addEventListener('click', createNewFolder);
     $('#btn-toggle-sidebar').addEventListener('click', expandOrCloseSidebar);
+
+    const resizer = $('#sidebar-resizer');
+    let resizeFrame = 0;
+    resizer.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      resizer.setPointerCapture(e.pointerId);
+      document.body.classList.add('sidebar-resizing');
+      const move = (ev) => {
+        const w = Math.max(SIDEBAR_MIN_W, Math.min(ev.clientX - sidebar.getBoundingClientRect().left, sidebarMaxW()));
+        document.documentElement.style.setProperty('--sidebar-w', Math.round(w) + 'px');
+        if (!resizeFrame) resizeFrame = requestAnimationFrame(() => { resizeFrame = 0; cm.refresh(); });
+      };
+      const up = () => {
+        resizer.removeEventListener('pointermove', move);
+        resizer.removeEventListener('pointerup', up);
+        resizer.removeEventListener('pointercancel', up);
+        document.body.classList.remove('sidebar-resizing');
+        localStorage.setItem('md-sidebar-w', String(Math.round(sidebar.getBoundingClientRect().width)));
+        cm.refresh();
+      };
+      resizer.addEventListener('pointermove', move);
+      resizer.addEventListener('pointerup', up);
+      resizer.addEventListener('pointercancel', up);
+    });
+    resizer.addEventListener('dblclick', () => {
+      localStorage.removeItem('md-sidebar-w');
+      applyStoredSidebarWidth();
+      cm.refresh();
+    });
     $('#btn-open-sidebar').addEventListener('click', openSidebar);
     $('#sidebar-backdrop').addEventListener('click', closeSidebar);
     const settingsWrap = $('#settings-menu-wrap');
