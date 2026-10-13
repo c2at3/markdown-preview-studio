@@ -2005,6 +2005,7 @@ graph TD
     'img,svg{max-width:100%;height:auto}img{break-inside:avoid}',
     'input[type=checkbox]{margin-right:6px}li:has(>input[type=checkbox]){list-style:none;margin-left:-1.3em}',
     'code{font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",Menlo,monospace;font-size:.88em;background:#eff1f3;padding:.15em .4em;border-radius:4px}',
+    ':not(pre)>code{color:#d2042d}',
     '.code-block-wrapper{border:1px solid #d0d7de;border-radius:8px;background:#f6f8fa;overflow:hidden}',
     '.code-block-toolbar{display:flex;padding:5px 12px;border-bottom:1px solid #d8dee4;background:#eef1f4}',
     '.code-block-lang{font-size:11px;font-weight:600;color:#59636e;text-transform:uppercase;letter-spacing:.04em}',
