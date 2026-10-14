@@ -94,6 +94,33 @@ body {
   z-index: 20;
 }
 
+/* Drag handle on the sidebar's right edge (desktop only - phones use the
+   open/full/hidden cycle instead). */
+.sidebar { position: relative; }
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 30;
+  touch-action: none;
+}
+.sidebar-resizer::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 0.15s;
+}
+.sidebar-resizer:hover::after,
+body.sidebar-resizing .sidebar-resizer::after { background: var(--accent); }
+body.sidebar-resizing { cursor: col-resize; user-select: none; }
+
 /* Dimmed backdrop behind the sidebar when it's open on mobile - tap it to
    close, same as swiping the sidebar away on a phone. JS only adds .show
    while the sidebar is open on a narrow viewport, so this stays inert on
@@ -1770,6 +1797,7 @@ body.dark .cm-attribute { color: #ffcb6b; }
 @media (max-width: 768px) {
   .sidebar { position: fixed; left: 0; top: 0; z-index: 100; box-shadow: var(--shadow-lg); transition: margin-left 0.25s ease, width 0.25s ease; }
   .sidebar.collapsed { margin-left: calc(-1 * var(--sidebar-w)); }
+  .sidebar-resizer { display: none; }
   /* Third tap-state (collapsed -> open -> full -> collapsed) so long file/
      folder names aren't stuck truncated at the normal 240px open width. */
   .sidebar.full { right: 0; width: auto; }
