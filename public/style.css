@@ -27,6 +27,7 @@
   --shadow: 0 2px 8px rgba(0,0,0,0.06);
   --shadow-lg: 0 8px 30px rgba(0,0,0,0.1);
   --code-bg: #f4f5f7;
+  --inline-code: #d2042d; /* cherry red */
   --blockquote-bar: #d1d5db;
   --table-border: #e5e7eb;
   --table-stripe: #f9fafb;
@@ -56,6 +57,7 @@ body.dark {
   --shadow: 0 2px 8px rgba(0,0,0,0.3);
   --shadow-lg: 0 8px 30px rgba(0,0,0,0.4);
   --code-bg: #1e2028;
+  --inline-code: #ff6b81; /* cherry red, lightened for dark backgrounds */
   --blockquote-bar: #3b4252;
   --table-border: #2a2f38;
   --table-stripe: #1e2028;
@@ -76,7 +78,13 @@ body {
 /* ===== SIDEBAR ===== */
 .sidebar {
   width: var(--sidebar-w);
+  /* 100vh on mobile is the viewport with the browser's address bar
+     collapsed - taller than what's actually visible when it's shown, which
+     pushed the statusbar below the fold with no way to scroll to it since
+     body has overflow:hidden. 100dvh tracks the real visible height;
+     browsers without it just keep the 100vh fallback above. */
   height: 100vh;
+  height: 100dvh;
   background: var(--bg-alt);
   border-right: 1px solid var(--border);
   display: flex;
@@ -85,6 +93,46 @@ body {
   transition: margin-left 0.25s ease, opacity 0.25s ease;
   z-index: 20;
 }
+
+/* Drag handle on the sidebar's right edge (desktop only - phones use the
+   open/full/hidden cycle instead). */
+.sidebar { position: relative; }
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 30;
+  touch-action: none;
+}
+.sidebar-resizer::after {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 0.15s;
+}
+.sidebar-resizer:hover::after,
+body.sidebar-resizing .sidebar-resizer::after { background: var(--accent); }
+body.sidebar-resizing { cursor: col-resize; user-select: none; }
+
+/* Dimmed backdrop behind the sidebar when it's open on mobile - tap it to
+   close, same as swiping the sidebar away on a phone. JS only adds .show
+   while the sidebar is open on a narrow viewport, so this stays inert on
+   desktop regardless. */
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 90;
+}
+.sidebar-backdrop.show { display: block; }
 
 .sidebar.collapsed {
   margin-left: calc(-1 * var(--sidebar-w));
@@ -199,6 +247,12 @@ body {
 .file-item.drag-over {
   border-top: 2px solid var(--accent);
 }
+.folder-header.drag-over-top {
+  box-shadow: inset 0 2px 0 0 var(--accent);
+}
+.folder-header.drag-over-bottom {
+  box-shadow: inset 0 -2px 0 0 var(--accent);
+}
 .folder-header.drag-over {
   background: var(--accent-soft);
   outline: 2px dashed var(--accent);
@@ -269,17 +323,20 @@ body {
   text-overflow: ellipsis;
 }
 
-.file-item-pin {
+.file-item-lock {
   flex-shrink: 0;
-  opacity: 0;
   display: flex;
   align-items: center;
-  cursor: pointer;
   color: var(--text-3);
-  transition: opacity 0.1s;
+  opacity: 0.5;
 }
-.file-item:hover .file-item-pin { opacity: 0.5; }
-.file-item .file-item-pin.pinned { opacity: 1; color: var(--accent); }
+
+.file-item-pin {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  color: var(--accent);
+}
 
 .file-item-actions {
   display: flex;
@@ -301,22 +358,111 @@ body {
 .file-item-actions button:hover { background: var(--bg-active); color: var(--danger); }
 
 .sidebar-footer {
-  padding: 10px 14px;
+  padding: 8px 10px;
   border-top: 1px solid var(--border);
-  display: flex;
-  align-items: center;
 }
-
-.sidebar-toggle {
+.sidebar-footer-row {
   display: flex;
   align-items: center;
-  cursor: pointer;
+  gap: 6px;
   color: var(--text-2);
 }
-.sidebar-toggle input { display: none; }
-.sidebar-toggle .icon-moon { display: none; }
-body.dark .sidebar-toggle .icon-sun { display: none; }
-body.dark .sidebar-toggle .icon-moon { display: block; }
+.sidebar-username {
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar-spacer { flex: 1; }
+.sidebar-footer-icons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.sidebar-icon-btn {
+  background: none;
+  border: none;
+  padding: 5px;
+  cursor: pointer;
+  color: var(--text-3);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  transition: color 0.1s;
+  text-decoration: none;
+}
+.sidebar-icon-btn:hover { color: var(--text); }
+
+/* Settings gear: tap-open menu (icon + label per item) that pops up above the
+   footer. Same open/close-outside pattern as the other dropdowns. */
+.sidebar-footer { position: relative; }
+.settings-menu-wrap { display: flex; }
+.settings-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 10px;
+  right: 10px;
+  margin-bottom: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  /* Stay inside the sidebar on short screens instead of running off the top. */
+  max-height: calc(100vh - 80px);
+  max-height: calc(100dvh - 80px);
+  overflow-y: auto;
+  z-index: 150;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+}
+.settings-menu-wrap.open .settings-menu { opacity: 1; visibility: visible; transform: translateY(0); }
+.settings-menu-wrap.open > .sidebar-icon-btn { color: var(--text); background: var(--bg-hover); }
+.settings-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.settings-menu-item svg { flex-shrink: 0; color: var(--text-3); }
+.settings-menu-item:hover { background: var(--bg-hover); color: var(--text); }
+.settings-menu-item:hover svg { color: var(--text); }
+.sidebar-link {
+  color: var(--text-3);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  transition: color 0.1s;
+}
+.sidebar-link:hover { color: var(--text); }
+.sidebar-logout {
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  color: var(--text-3);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  transition: all 0.1s;
+}
+.sidebar-logout:hover { color: var(--danger); background: var(--danger-soft); }
+
 
 /* ===== MAIN ===== */
 .main {
@@ -324,7 +470,8 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
   display: flex;
   flex-direction: column;
   min-width: 0;
-  height: 100vh;
+  height: 100vh; /* see the comment on .sidebar - same mobile address-bar issue */
+  height: 100dvh;
   position: relative;
 }
 
@@ -376,7 +523,11 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
-  width: 220px;
+  flex: 1;
+  /* Grows into all free space in the header and only stops at the next
+     element; longer than that, it truncates with an ellipsis. */
+  min-width: 0;
+  text-overflow: ellipsis;
   transition: all 0.15s;
   font-family: var(--font-sans);
 }
@@ -384,9 +535,7 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
 .file-name-input:focus { border-color: var(--accent); background: var(--surface); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
 
 .save-status {
-  font-size: 11px;
-  color: var(--text-3);
-  white-space: nowrap;
+  display: none;
 }
 
 /* Tool buttons */
@@ -423,6 +572,8 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
 .tool-btn:hover { background: var(--bg-hover); color: var(--text); border-color: var(--border); }
 .tool-btn.accent { color: var(--accent); }
 .tool-btn.accent:hover { background: var(--accent-soft); border-color: var(--accent); }
+.tool-btn.active { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
+.tool-btn.active:hover { background: var(--accent-soft); border-color: var(--accent); }
 
 .sync-toggle {
   display: flex;
@@ -442,6 +593,118 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
 .sync-toggle input { display: none; }
 .sync-label { white-space: nowrap; }
 
+/* Dark-mode toggle in the toolbar (desktop: inline; mobile: inside the
+   tools drawer) - the only dark-mode switch in the app. */
+.mt-dark-toggle .icon-moon { display: none; }
+body.dark .mt-dark-toggle .icon-sun { display: none; }
+body.dark .mt-dark-toggle .icon-moon { display: block; }
+
+/* ===== MOBILE TOOLS DRAWER =====
+   Desktop: inert wrapper, its contents sit inline in the toolbar exactly
+   as if they weren't wrapped at all (same gap as .toolbar-right's own).
+   Mobile media query below turns it into a tap-open dropdown. */
+.mobile-tools-control { display: flex; align-items: center; gap: 4px; }
+.mobile-tools-group { display: flex; align-items: center; gap: 4px; }
+#btn-mobile-tools { display: none; }
+
+/* ===== LAYOUT CONTROL (nút bố cục, hover hiện dropdown) ===== */
+.layout-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.layout-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  /* Không để khoảng trống giữa nút và dropdown - nếu có gap, di chuột xuống
+     dropdown sẽ thoát khỏi vùng :hover của .layout-control giữa chừng và
+     đóng dropdown trước khi chuột tới nơi (đã gặp lỗi này khi test). */
+  margin-top: -1px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 172px;
+  /* Above .sidebar (100) and .sidebar-backdrop (90) on mobile - otherwise
+     opening this while the sidebar is open renders it behind the dimmed
+     backdrop, invisible. */
+  z-index: 150;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+  transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+}
+.layout-control:hover .layout-dropdown,
+.layout-control:focus-within .layout-dropdown,
+.layout-control.open .layout-dropdown {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+.layout-dropdown-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 8px 2px;
+}
+.layout-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: left;
+  font-family: var(--font-sans);
+  transition: background 0.1s, color 0.1s;
+}
+.layout-option:hover { background: var(--bg-hover); color: var(--text); }
+.layout-option.active { color: var(--accent); background: var(--accent-soft); }
+.layout-dropdown-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 2px;
+}
+.layout-view-row {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-alt);
+  border-radius: var(--radius-sm);
+}
+.layout-view-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 6px;
+  background: none;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 1px);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  transition: background 0.1s, color 0.1s;
+}
+.layout-view-btn:hover { background: var(--bg-hover); color: var(--text); }
+.layout-view-btn.active { color: var(--accent); background: var(--surface); box-shadow: var(--shadow-sm); }
+
 /* ===== EDITOR CONTAINER ===== */
 .editor-container {
   display: flex;
@@ -457,6 +720,35 @@ body.dark .sidebar-toggle .icon-moon { display: block; }
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+/* Chia đôi ngang: editor trên, preview dưới (hoặc ngược lại), chia bởi thanh kéo nằm ngang */
+.editor-container.layout-stacked {
+  flex-direction: column;
+}
+.editor-container.layout-stacked .divider {
+  width: 100%;
+  height: 1px;
+  cursor: row-resize;
+}
+
+/* Toàn màn hình: chỉ 1 pane hiển thị, chuyển đổi bằng nút viết/xem trước */
+.editor-container.layout-full .pane {
+  display: none;
+}
+.editor-container.layout-full .pane.full-visible {
+  display: flex;
+  flex: 1 !important;
+  width: 100% !important;
+  height: 100% !important;
+  /* The mobile stacked-layout rule below caps each pane at 50% height for
+     when both are visible at once - max-height always wins over height
+     regardless of !important, so it has to be lifted here too or a
+     fullscreen pane on mobile silently gets clamped to half the screen. */
+  max-height: none !important;
+}
+.editor-container.layout-full .divider {
+  display: none;
 }
 
 /* ===== FIND/REPLACE PANEL ===== */
@@ -825,6 +1117,27 @@ body.dark .cm-attribute { color: #ffcb6b; }
   background: var(--border);
 }
 .statusbar .spacer { flex: 1; }
+.stat-save { font-size: 10px; color: var(--accent); font-weight: 500; }
+
+/* ===== TEXT SETTINGS (Size/Weight) - inline on desktop, tap-popover on mobile =====
+   Nested flex rows matching .statusbar's own gap, not display:contents - contents
+   dropped these from flex-item layout entirely in real-world testing (Chrome/desktop),
+   collapsing the Size/Weight controls instead of leaving them inline as intended. */
+.text-settings-control { display: flex; align-items: center; gap: 8px; }
+.text-settings-popover { display: flex; align-items: center; gap: 8px; }
+.sb-toggle-btn {
+  display: none;
+  background: none;
+  border: none;
+  padding: 2px 6px;
+  cursor: pointer;
+  color: var(--text-3);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-sans);
+}
+.sb-toggle-btn:hover { background: var(--bg-hover); color: var(--text); }
 
 /* ===== SCROLLBAR (thin globally) ===== */
 * {
@@ -873,6 +1186,10 @@ body.dark .cm-attribute { color: #ffcb6b; }
 .markdown-body li { margin-bottom: 3px; }
 .markdown-body li > ul, .markdown-body li > ol { margin-bottom: 0; margin-top: 3px; }
 
+/* Inline `code` only (code blocks keep their syntax-highlight colours). */
+.markdown-body :not(pre) > code {
+  color: var(--inline-code);
+}
 .markdown-body code {
   background: var(--code-bg);
   padding: 0.15em 0.45em;
@@ -881,14 +1198,67 @@ body.dark .cm-attribute { color: #ffcb6b; }
   font-size: 0.88em;
 }
 
-.markdown-body pre {
-  background: var(--code-bg);
-  padding: 14px 18px;
-  border-radius: var(--radius);
-  overflow-x: auto;
+.code-block-wrapper {
   margin-bottom: 14px;
   border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
+.code-block-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border-light);
+}
+.code-block-lang {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.code-block-actions { display: flex; gap: 2px; }
+.code-block-actions button {
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 4px 5px;
+  color: var(--text-3);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.1s, background 0.1s;
+}
+.code-block-actions button:hover { background: var(--bg-hover); color: var(--text); }
+.code-block-actions .code-wrap-btn.active { color: var(--accent); }
+.code-block-actions .code-copy-btn.copied { color: var(--success); }
+
+.markdown-body .code-block-wrapper pre {
+  background: var(--code-bg);
+  padding: 10px 14px;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  overflow-x: auto;
+  /* keep the horizontal scrollbar thin and flush against the code, not a
+     separate strip of empty space below it */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.markdown-body .code-block-wrapper pre::-webkit-scrollbar { height: 6px; }
+.markdown-body .code-block-wrapper pre::-webkit-scrollbar-track { background: transparent; }
+.markdown-body .code-block-wrapper pre::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.markdown-body .code-block-wrapper pre::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
+
+.code-block-wrapper.wrapped pre { overflow-x: hidden; }
+.code-block-wrapper.wrapped pre code {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
 .markdown-body pre code {
   background: none;
   padding: 0;
@@ -1056,6 +1426,40 @@ body.dark .cm-attribute { color: #ffcb6b; }
   user-select: none;
 }
 
+/* Lightbox download menu */
+.lb-download-menu {
+  position: fixed;
+  z-index: 2002;
+  background: rgba(0,0,0,0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 4px;
+  min-width: 140px;
+}
+.lb-dl-item {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.85);
+  cursor: pointer;
+  border-radius: 5px;
+  transition: background 0.1s;
+}
+.lb-dl-item:hover { background: rgba(255,255,255,0.15); }
+.lb-dl-label {
+  padding: 4px 12px 2px;
+  font-size: 10px;
+  color: rgba(255,255,255,0.4);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.lb-dl-divider {
+  height: 1px;
+  background: rgba(255,255,255,0.1);
+  margin: 3px 0;
+}
+
 .lightbox-caption {
   position: fixed;
   bottom: 20px;
@@ -1170,6 +1574,7 @@ body.dark .cm-attribute { color: #ffcb6b; }
 }
 .share-url-box input {
   flex: 1;
+  min-width: 0;
   padding: 9px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1222,6 +1627,8 @@ body.dark .cm-attribute { color: #ffcb6b; }
   transition: background 0.1s;
 }
 .context-menu-item:hover { background: var(--bg-hover); }
+.context-menu-item-danger { color: var(--danger); }
+.context-menu-item-danger:hover { background: var(--danger-soft); }
 .context-menu-divider {
   height: 1px;
   background: var(--border);
@@ -1239,6 +1646,32 @@ body.dark .cm-attribute { color: #ffcb6b; }
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   gap: 4px;
+}
+.ctx-icons-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.ctx-icon-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-2);
+  border: 1.5px solid transparent;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+.ctx-icon-swatch:hover { background: var(--bg-hover); }
+.ctx-icon-swatch.active { border-color: var(--accent); color: var(--accent); }
+.file-template-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ctx-color {
   width: 22px;
@@ -1259,6 +1692,40 @@ body.dark .cm-attribute { color: #ffcb6b; }
   font-size: 10px;
   color: var(--text-3);
 }
+
+@keyframes btn-spin { to { transform: rotate(360deg); } }
+.spinner-icon { animation: btn-spin 0.7s linear infinite; display: inline-block; vertical-align: middle; }
+
+.stale-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 500;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  background: var(--warning);
+  color: #1a1207;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  font-size: 13px;
+  font-weight: 500;
+}
+.stale-banner.show { display: flex; }
+.stale-banner button {
+  background: rgba(0,0,0,0.15);
+  border: none;
+  color: inherit;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.stale-banner button:hover { background: rgba(0,0,0,0.25); }
+.stale-banner .stale-dismiss { background: none; padding: 4px; display: flex; }
 
 .share-url-box button.share-revoke-btn {
   background: var(--danger-soft);
@@ -1284,6 +1751,14 @@ body.dark .cm-attribute { color: #ffcb6b; }
   color: var(--text-3);
   line-height: 1.6;
 }
+
+.apikey-create-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.apikey-create-row .file-name-input { flex: 1; }
+.apikey-create-row #apikey-create-btn { margin: 0; width: auto; }
 
 /* ===== SHARED BANNER ===== */
 .shared-banner {
@@ -1320,11 +1795,136 @@ body.dark .cm-attribute { color: #ffcb6b; }
 
 /* ===== RESPONSIVE ===== */
 @media (max-width: 768px) {
-  .sidebar { position: fixed; left: 0; top: 0; z-index: 100; box-shadow: var(--shadow-lg); }
+  .sidebar { position: fixed; left: 0; top: 0; z-index: 100; box-shadow: var(--shadow-lg); transition: margin-left 0.25s ease, width 0.25s ease; }
   .sidebar.collapsed { margin-left: calc(-1 * var(--sidebar-w)); }
+  .sidebar-resizer { display: none; }
+  /* Third tap-state (collapsed -> open -> full -> collapsed) so long file/
+     folder names aren't stuck truncated at the normal 240px open width. */
+  .sidebar.full { right: 0; width: auto; }
+  /* Chevron points ">" while the next tap expands, back to "<" once full
+     (next tap collapses). */
+  #btn-toggle-sidebar svg { transition: transform 0.2s; transform: rotate(180deg); }
+  .sidebar.full #btn-toggle-sidebar svg { transform: none; }
   .editor-container { flex-direction: column; }
   .editor-container .pane { flex: 1 1 0; min-height: 0; max-height: 50%; }
   .divider { width: 100%; height: 1px; cursor: row-resize; }
   .toolbar-group { display: none; }
-  .file-name-input { width: 140px; }
+
+  /* Input + button side by side don't fit a phone-width modal - stack them
+     instead of squeezing the name field down to a few characters. */
+  .apikey-create-row { flex-direction: column; }
+  .apikey-create-row .file-name-input { max-width: none; width: 100%; }
+  .apikey-create-row #apikey-create-btn { width: 100%; justify-content: center; }
+
+  /* The find/replace row (input + options + count + nav buttons) doesn't
+     fit in one line on a phone - wrap the input onto its own full-width
+     line and let the buttons flow onto a second line below it. */
+  .find-row { flex-wrap: wrap; row-gap: 6px; }
+  .find-input-wrap { flex-basis: 100%; }
+
+  /* The preview pane's font-size and padding were sized for a desktop
+     reading width - on a phone the same em-based headings and 28px side
+     padding read oversized and eat into an already-narrow column. The
+     "Aa" control only resizes the code editor, not this pane, so there's
+     no other way to adjust it. */
+  .preview-content { padding: 14px 16px; font-size: 14px; }
+
+  /* Icon-only toolbar buttons - there isn't room for both icon and label. */
+  .tool-btn-label, .sync-label { display: none; }
+  .tool-btn { padding: 5px; }
+
+  /* The formatting and MD/HTML-copy groups collapse to nothing on mobile
+     (.toolbar-group above), but the plain divider bars next to them don't
+     know that and were left behind as a dangling run of "| |" marks with
+     nothing between them. Hide every divider in the toolbar except the one
+     actually separating two things that are still visible (find vs. the
+     tools drawer). */
+  .toolbar-right > .toolbar-divider { display: none; }
+  #divider-find-tools { display: block; }
+
+  /* Find/dark-mode/share/PDF/sync/layout together don't fit inline on a
+     phone - tuck them behind a single "more tools" button instead, same
+     tap/outside-tap pattern as the layout and text-settings dropdowns. */
+  .mobile-tools-control { position: relative; }
+  #btn-mobile-tools { display: flex; }
+  .mobile-tools-group {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: -1px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    padding: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    /* Without an explicit width, an absolutely-positioned wrapping flex
+       container shrinks to fit just one child per line instead of trying
+       everything on one line first - width:max-content fixes that, capped
+       by max-width so it still wraps if it would otherwise overflow. */
+    width: max-content;
+    max-width: 210px;
+    z-index: 150;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-4px);
+    transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+  }
+  .mobile-tools-control.open .mobile-tools-group {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+  /* The layout dropdown nests inside this drawer on mobile - needs to sit
+     above it (and above the drawer's own backdrop-adjacent siblings). */
+  .mobile-tools-group .layout-dropdown { z-index: 160; }
+
+  /* Font size/weight steppers overflowed the statusbar inline on a phone -
+     tuck them behind a tap-open popover instead of just dropping them, so
+     they're still reachable rather than gone. */
+  .text-settings-control { display: block; position: relative; }
+  .sb-toggle-btn { display: block; }
+  .text-settings-popover {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    margin-bottom: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    padding: 8px 10px;
+    white-space: nowrap;
+    /* Same reasoning as .layout-dropdown - must clear .sidebar (100). */
+    z-index: 150;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(4px);
+    transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+  }
+  .text-settings-control.open .text-settings-popover {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+  /* .sb-btn (+/-) is ~15x15px, sized for a mouse cursor in the desktop
+     statusbar - far below any reasonable touch-target size, so taps on a
+     real phone kept missing it even though the tap-to-open popover itself
+     worked fine. Enlarge just the copies inside this mobile popover. */
+  .text-settings-popover .sb-btn {
+    min-width: 32px;
+    min-height: 32px;
+    justify-content: center;
+    font-size: 14px;
+    padding: 4px;
+  }
+  .text-settings-popover .sb-value {
+    font-size: 13px;
+    min-width: 28px;
+  }
 }

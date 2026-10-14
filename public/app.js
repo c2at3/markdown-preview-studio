@@ -14,6 +14,57 @@
   const modalBody = $('#modal-body');
   const sidebar = $('#sidebar');
 
+  // Tooltip with the full name, only while it's actually cut off by an ellipsis.
+  fileNameInput.addEventListener('mouseenter', () => {
+    fileNameInput.title = fileNameInput.scrollWidth > fileNameInput.clientWidth ? fileNameInput.value : '';
+  });
+
+  // Tooltip with the full name, only when the sidebar row's name is actually
+  // cut off by its ellipsis (so short names don't get a pointless tooltip).
+  fileList.addEventListener('mouseover', (e) => {
+    const row = e.target.closest('.file-item, .folder-header');
+    if (!row) return;
+    const nameEl = row.querySelector('.file-item-name, .folder-name');
+    row.title = nameEl && nameEl.scrollWidth > nameEl.clientWidth ? nameEl.textContent : '';
+  });
+
+  // ===== Sidebar width (desktop): drag the right edge, remembered across reloads =====
+  const SIDEBAR_MIN_W = 180;
+  const sidebarMaxW = () => Math.min(640, Math.round(window.innerWidth * 0.6));
+  function applyStoredSidebarWidth() {
+    const root = document.documentElement.style;
+    const saved = parseInt(localStorage.getItem('md-sidebar-w'), 10);
+    // Phones keep the fixed overlay width; only desktop honours the saved one.
+    if (window.innerWidth <= 768 || !saved) { root.removeProperty('--sidebar-w'); return; }
+    root.setProperty('--sidebar-w', Math.max(SIDEBAR_MIN_W, Math.min(saved, sidebarMaxW())) + 'px');
+  }
+  applyStoredSidebarWidth();
+  window.addEventListener('resize', applyStoredSidebarWidth);
+
+  // ===== Sidebar open/close (mobile: dims the page behind it, tap it to close) =====
+  // On mobile the "<<" button cycles collapsed -> open -> full -> collapsed
+  // instead of only collapsing, so long file/folder names have a wider state
+  // to expand into without giving up the normal partial-width overlay.
+  function closeSidebar() {
+    sidebar.classList.add('collapsed');
+    sidebar.classList.remove('full');
+    $('#btn-open-sidebar').style.display = 'flex';
+    $('#sidebar-backdrop').classList.remove('show');
+  }
+  function openSidebar() {
+    sidebar.classList.remove('collapsed');
+    sidebar.classList.remove('full');
+    $('#btn-open-sidebar').style.display = 'none';
+    if (window.innerWidth <= 768) $('#sidebar-backdrop').classList.add('show');
+  }
+  function expandOrCloseSidebar() {
+    if (window.innerWidth <= 768 && !sidebar.classList.contains('full')) {
+      sidebar.classList.add('full');
+    } else {
+      closeSidebar();
+    }
+  }
+
   // ===== CodeMirror Editor =====
   const cm = CodeMirror($('#editor-wrap'), {
     mode: 'gfm',
@@ -41,10 +92,27 @@
   let isSharedView = false;
   let dragItem = null;
   let dragType = null;
+  let staleBannerShown = false;
+
+  // ===== Loading state for async action buttons =====
+  const SPINNER_SVG = '<svg class="spinner-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><circle cx="12" cy="12" r="9" opacity="0.25"/><path d="M21 12a9 9 0 00-9-9"/></svg>';
+  async function withLoading(btn, fn) {
+    if (!btn) return fn();
+    const original = btn.innerHTML;
+    const wasDisabled = btn.disabled;
+    btn.innerHTML = SPINNER_SVG;
+    btn.disabled = true;
+    try {
+      return await fn();
+    } finally {
+      btn.innerHTML = original;
+      btn.disabled = wasDisabled;
+    }
+  }
 
   const DEFAULT_MD = `# Welcome to Markdown Live Preview
 
-Write your markdown on the left, see the result on the right — in real time.
+Write your markdown on the left, see the result on the right - in real time.
 
 ## Features
 
@@ -74,7 +142,7 @@ Visit [GitHub](https://github.com) for more info.
 ### Blockquote
 
 > "The best way to predict the future is to invent it."
-> — Alan Kay
+> - Alan Kay
 
 ### Code Block
 
@@ -153,6 +221,28 @@ graph TD
       })).json();
     },
     async deleteFolder(id) { await fetch('/api/folders/' + id, { method: 'DELETE' }); },
+    async getTemplates() { return (await fetch('/api/templates')).json(); },
+    async createTemplate(name, content) {
+      return (await fetch('/api/templates', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, content })
+      })).json();
+    },
+    async updateTemplate(id, data) {
+      return (await fetch('/api/templates/' + id, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      })).json();
+    },
+    async deleteTemplate(id) { await fetch('/api/templates/' + id, { method: 'DELETE' }); },
+    async getApiKeys() { return (await fetch('/api/apikeys')).json(); },
+    async createApiKey(name) {
+      return (await fetch('/api/apikeys', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      })).json();
+    },
+    async deleteApiKey(id) { await fetch('/api/apikeys/' + id, { method: 'DELETE' }); },
     async uploadImage(data, filename) {
       return (await fetch('/api/upload', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -163,6 +253,12 @@ graph TD
 
   // ===== Marked config =====
   const renderer = new marked.Renderer();
+
+  // Wrap is one global preference, not a per-block toggle: turning it on
+  // anywhere applies it to every code block (current ones immediately, and
+  // any added later since renderer.code reads this on every render), and it
+  // survives reloads the same way dark mode / font size do.
+  let codeWrapEnabled = localStorage.getItem('md-code-wrap') === '1';
 
   renderer.code = function (code, language) {
     if (typeof code === 'object') { language = code.lang; code = code.text; }
@@ -175,7 +271,16 @@ graph TD
     } else {
       try { highlighted = hljs.highlightAuto(code).value; } catch (e) {}
     }
-    return '<pre><code class="hljs language-' + (language || '') + '">' + highlighted + '</code></pre>';
+    return '<div class="code-block-wrapper' + (codeWrapEnabled ? ' wrapped' : '') + '" data-code="' + encodeURIComponent(code) + '">' +
+      '<div class="code-block-toolbar">' +
+        '<span class="code-block-lang">' + escapeHtml(language || 'text') + '</span>' +
+        '<div class="code-block-actions">' +
+          '<button type="button" class="code-wrap-btn' + (codeWrapEnabled ? ' active' : '') + '" title="Wrap long lines"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="15" y2="18"/><path d="M12 15l3 3-3 3"/></svg></button>' +
+          '<button type="button" class="code-copy-btn" title="Copy code"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>' +
+        '</div>' +
+      '</div>' +
+      '<pre><code class="hljs language-' + (language || '') + '">' + highlighted + '</code></pre>' +
+    '</div>';
   };
 
   renderer.checkbox = function (checked) {
@@ -189,8 +294,8 @@ graph TD
   // ===== Mermaid =====
   const MERMAID_FONT = '"Inter", "Segoe UI", "Roboto", "Noto Sans", sans-serif';
 
-  function initMermaid() {
-    const isDark = document.body.classList.contains('dark');
+  function initMermaid(forceLight) {
+    const isDark = !forceLight && document.body.classList.contains('dark');
     mermaid.initialize({
       startOnLoad: false, theme: isDark ? 'dark' : 'default',
       securityLevel: 'loose', suppressErrorRendering: true,
@@ -216,13 +321,27 @@ graph TD
     });
   }
 
+  // preview.innerHTML is fully rebuilt on every keystroke (see render() below),
+  // which would otherwise re-run mermaid's layout engine for every diagram in
+  // the document on every render, even ones nowhere near the edit. Cache the
+  // rendered SVG by diagram source so only a diagram whose own code actually
+  // changed pays that cost again.
+  const mermaidCache = new Map();
+
   async function renderMermaidBlocks() {
     const els = preview.querySelectorAll('.mermaid-placeholder');
     for (const el of els) {
       const code = decodeURIComponent(el.getAttribute('data-mermaid'));
+      const cached = mermaidCache.get(code);
+      if (cached) {
+        el.innerHTML = cached;
+        el.classList.replace('mermaid-placeholder', 'mermaid-rendered');
+        continue;
+      }
       try {
         const id = 'mmd-' + Date.now() + '-' + Math.random().toString(36).slice(2, 5);
         const { svg } = await mermaid.render(id, code);
+        mermaidCache.set(code, svg);
         el.innerHTML = svg;
         el.classList.replace('mermaid-placeholder', 'mermaid-rendered');
       } catch (e) {
@@ -243,7 +362,10 @@ graph TD
 
   function render() {
     isRendering = true;
-    preview.innerHTML = marked.parse(cm.getValue());
+    preview.innerHTML = DOMPurify.sanitize(marked.parse(cm.getValue()), {
+      ADD_TAGS: ['input', 'button'],
+      ADD_ATTR: ['target', 'checked', 'disabled', 'data-mermaid', 'data-code', 'type']
+    });
     preview.querySelectorAll('a').forEach(a => {
       a.setAttribute('target', '_blank');
       a.setAttribute('rel', 'noopener noreferrer');
@@ -262,7 +384,7 @@ graph TD
   const lbZoomLevel = $('#lb-zoom-level');
 
   let lbZoom = 1, lbPanX = 0, lbPanY = 0, lbDragging = false, lbDragStart = { x: 0, y: 0 };
-  let lbIsSvg = false, lbSvgBaseW = 0, lbSvgBaseH = 0;
+  let lbIsSvg = false, lbSvgBaseW = 0, lbSvgBaseH = 0, lbSource = null, lbOriginalSvg = null;
   const LB_MIN_ZOOM = 0.25, LB_MAX_ZOOM = 5, LB_ZOOM_STEP = 0.25;
 
   function lbApplyTransform(animate) {
@@ -286,13 +408,14 @@ graph TD
   function lbReset() { lbZoom = 1; lbPanX = 0; lbPanY = 0; lbApplyTransform(true); }
 
   function openLightbox(content, caption) {
-    lbTransform.innerHTML = ''; lbZoom = 1; lbPanX = 0; lbPanY = 0; lbIsSvg = false;
+    lbTransform.innerHTML = ''; lbZoom = 1; lbPanX = 0; lbPanY = 0; lbIsSvg = false; lbSource = content; lbOriginalSvg = null;
     if (typeof content === 'string') {
       const img = document.createElement('img');
       img.className = 'lightbox-content'; img.src = content; img.alt = caption || ''; img.draggable = false;
       lbTransform.appendChild(img);
     } else {
       lbIsSvg = true;
+      lbOriginalSvg = content;
       const svgClone = content.cloneNode(true);
       const vb = svgClone.getAttribute('viewBox');
       const vbParts = vb ? vb.split(/[\s,]+/).map(Number) : null;
@@ -316,6 +439,127 @@ graph TD
   $('#lb-zoom-in').addEventListener('click', () => { lbSetZoom(lbZoom + LB_ZOOM_STEP); lbApplyTransform(true); });
   $('#lb-zoom-out').addEventListener('click', () => { lbSetZoom(lbZoom - LB_ZOOM_STEP); lbApplyTransform(true); });
   $('#lb-reset').addEventListener('click', lbReset);
+  $('#lb-download').addEventListener('click', () => {
+    if (!lbSource) return;
+    if (typeof lbSource === 'string') {
+      const a = document.createElement('a');
+      a.href = lbSource;
+      a.download = lbSource.split('/').pop() || 'image';
+      a.click();
+    } else {
+      showDiagramDownloadMenu();
+    }
+  });
+
+  function showDiagramDownloadMenu() {
+    const btn = $('#lb-download');
+    const rect = btn.getBoundingClientRect();
+    let menu = $('#lb-download-menu');
+    if (menu) { menu.remove(); return; }
+
+    menu = document.createElement('div');
+    menu.id = 'lb-download-menu';
+    menu.className = 'lb-download-menu';
+    menu.style.top = (rect.bottom + 6) + 'px';
+    menu.style.left = rect.left + 'px';
+
+    // Use original preview SVG for real dimensions
+    const origSvg = lbOriginalSvg || lbTransform.querySelector('svg');
+    const vb = origSvg?.getAttribute('viewBox');
+    const vbParts = vb ? vb.split(/[\s,]+/).map(Number) : null;
+    // For mermaid with useMaxWidth, viewBox has the natural size
+    // but we also check the SVG's rendered size in preview for accuracy
+    let baseW, baseH;
+    if (vbParts && vbParts[2] > 0) {
+      baseW = Math.round(vbParts[2]);
+      baseH = Math.round(vbParts[3]);
+    } else {
+      baseW = origSvg?.getBoundingClientRect?.()?.width || parseInt(origSvg?.getAttribute('width')) || 800;
+      baseH = origSvg?.getBoundingClientRect?.()?.height || parseInt(origSvg?.getAttribute('height')) || 600;
+    }
+
+    const scales = [
+      { pct: 50, s: 0.5 },
+      { pct: 100, s: 1 },
+      { pct: 150, s: 1.5 },
+      { pct: 200, s: 2 },
+      { pct: 300, s: 3 },
+      { pct: 500, s: 5 },
+    ];
+    const pngItems = scales.map(({ pct, s }) => {
+      const w = Math.round(baseW * s);
+      const h = Math.round(baseH * s);
+      return '<div class="lb-dl-item" data-format="png" data-scale="' + s + '">PNG ' + pct + '% <span style="color:rgba(255,255,255,0.4);font-size:10px;margin-left:4px">' + w + '×' + h + '</span></div>';
+    }).join('');
+
+    menu.innerHTML = '<div class="lb-dl-item" data-format="svg">SVG (vector)</div><div class="lb-dl-divider"></div><div class="lb-dl-label">PNG (raster)</div>' + pngItems;
+
+    menu.addEventListener('click', (e) => {
+      const item = e.target.closest('.lb-dl-item');
+      if (!item) return;
+      menu.remove();
+      const format = item.dataset.format;
+      const svgEl = lbTransform.querySelector('svg');
+      if (!svgEl) return;
+
+      const srcSvg = lbOriginalSvg || lbTransform.querySelector('svg');
+      if (!srcSvg) return;
+      if (format === 'svg') {
+        const clone = srcSvg.cloneNode(true);
+        clone.removeAttribute('style');
+        clone.removeAttribute('width');
+        clone.removeAttribute('height');
+        const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'diagram.svg';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      } else {
+        const scale = parseFloat(item.dataset.scale);
+        exportSvgAsPng(srcSvg, scale, baseW, baseH);
+      }
+    });
+
+    document.body.appendChild(menu);
+    const closeMenu = (e) => { if (!menu.contains(e.target) && e.target !== btn) { menu.remove(); document.removeEventListener('click', closeMenu); } };
+    setTimeout(() => document.addEventListener('click', closeMenu), 0);
+  }
+
+  function exportSvgAsPng(svgEl, scale, baseW, baseH) {
+    const clone = svgEl.cloneNode(true);
+    clone.removeAttribute('style');
+    const vb = clone.getAttribute('viewBox');
+    const parts = vb ? vb.split(/[\s,]+/).map(Number) : null;
+    const w = baseW || (parts ? parts[2] : parseFloat(clone.getAttribute('width')) || 800);
+    const h = baseH || (parts ? parts[3] : parseFloat(clone.getAttribute('height')) || 600);
+
+    clone.setAttribute('width', w);
+    clone.setAttribute('height', h);
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+
+    const svgData = new XMLSerializer().serializeToString(clone);
+    const img = new Image();
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    const ctx = canvas.getContext('2d');
+
+    img.onload = () => {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(blob => {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'diagram-' + Math.round(scale * 100) + 'pct.png';
+        a.click();
+        URL.revokeObjectURL(a.href);
+      }, 'image/png');
+    };
+    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+  }
+
   $('#lb-close').addEventListener('click', closeLightbox);
 
   lbViewport.addEventListener('wheel', (e) => {
@@ -369,13 +613,38 @@ graph TD
   }
 
   preview.addEventListener('click', (e) => {
-    const btn = e.target.closest('.media-zoom-btn'); if (!btn) return;
-    e.preventDefault(); e.stopPropagation();
-    const wrapper = btn.closest('.media-wrapper');
-    const img = wrapper?.querySelector('img');
-    const svg = wrapper?.querySelector('.mermaid-rendered svg');
-    if (img) openLightbox(img.src, img.alt);
-    else if (svg) openLightbox(svg, 'Mermaid Diagram');
+    const zoomBtn = e.target.closest('.media-zoom-btn');
+    if (zoomBtn) {
+      e.preventDefault(); e.stopPropagation();
+      const wrapper = zoomBtn.closest('.media-wrapper');
+      const img = wrapper?.querySelector('img');
+      const svg = wrapper?.querySelector('.mermaid-rendered svg');
+      if (img) openLightbox(img.src, img.alt);
+      else if (svg) openLightbox(svg, 'Mermaid Diagram');
+      return;
+    }
+
+    const wrapBtn = e.target.closest('.code-wrap-btn');
+    if (wrapBtn) {
+      codeWrapEnabled = !codeWrapEnabled;
+      localStorage.setItem('md-code-wrap', codeWrapEnabled ? '1' : '0');
+      preview.querySelectorAll('.code-block-wrapper').forEach((block) => {
+        block.classList.toggle('wrapped', codeWrapEnabled);
+        block.querySelector('.code-wrap-btn')?.classList.toggle('active', codeWrapEnabled);
+      });
+      return;
+    }
+
+    const copyBtn = e.target.closest('.code-copy-btn');
+    if (copyBtn) {
+      const block = copyBtn.closest('.code-block-wrapper');
+      const code = decodeURIComponent(block.dataset.code || '');
+      navigator.clipboard.writeText(code).then(() => {
+        copyBtn.classList.add('copied');
+        setTimeout(() => copyBtn.classList.remove('copied'), 1500);
+      });
+      return;
+    }
   });
 
   // ===== Font controls =====
@@ -399,6 +668,13 @@ graph TD
   const WEIGHT_STEPS = [200, 300, 400, 500, 700];
   $('#weight-up').addEventListener('click', () => { const i = WEIGHT_STEPS.indexOf(editorFontWeight); editorFontWeight = WEIGHT_STEPS[Math.min(i + 1, WEIGHT_STEPS.length - 1)] || 700; applyFont(); });
   $('#weight-down').addEventListener('click', () => { const i = WEIGHT_STEPS.indexOf(editorFontWeight); editorFontWeight = WEIGHT_STEPS[Math.max(i - 1, 0)] || 200; applyFont(); });
+
+  // On mobile the Size/Weight steppers live behind a tap-open popover
+  // instead of sitting inline in the statusbar - same tap/click-outside
+  // pattern as the layout switcher (there's no hover on touch).
+  const textSettingsControl = $('#text-settings-control');
+  $('#btn-text-settings').addEventListener('click', (e) => { e.stopPropagation(); textSettingsControl.classList.toggle('open'); });
+  document.addEventListener('click', (e) => { if (!textSettingsControl.contains(e.target)) textSettingsControl.classList.remove('open'); });
 
   applyFont();
 
@@ -624,6 +900,108 @@ graph TD
   const ctxColors = $('#context-menu-colors');
   let ctxFolderId = null;
 
+  // ===== File icons (right-click on a file) =====
+  const FILE_ICONS = [
+    { key: 'default', name: 'File', path: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>' },
+    { key: 'note', name: 'Note', path: '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h8M8 17h8"/>' },
+    { key: 'bug', name: 'Bug', path: '<path d="M8 2l1.88 1.88M14.12 3.88L16 2"/><path d="M9 7.13V6a3 3 0 116 0v1.13"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 014-4h4a4 4 0 014 4v3c0 3.3-2.7 6-6 6z"/><path d="M12 20v-9M6.53 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M20.97 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4"/>' },
+    { key: 'vulnerability', name: 'Vulnerability', path: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4M12 16h.01"/>' },
+    { key: 'lock', name: 'Security', path: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>' },
+    { key: 'warning', name: 'Warning', path: '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4M12 17h.01"/>' },
+    { key: 'work', name: 'Work', path: '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/>' },
+    { key: 'checklist', name: 'Checklist', path: '<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>' },
+    { key: 'idea', name: 'Idea', path: '<path d="M9 18h6M10 22h4M12 2a6 6 0 016 6c0 3-2 4.5-3 6H9c-1-1.5-3-3-3-6a6 6 0 016-6z"/>' },
+    { key: 'book', name: 'Book', path: '<path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/>' },
+    { key: 'chart', name: 'Chart', path: '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>' },
+    { key: 'star', name: 'Star', path: '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>' },
+    { key: 'flag', name: 'Flag', path: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>' },
+    { key: 'rocket', name: 'Rocket', path: '<path d="M12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>' },
+    { key: 'calendar', name: 'Calendar', path: '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>' },
+    { key: 'code', name: 'Code', path: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>' },
+  ];
+
+  function fileIconHTML(f) {
+    const icon = FILE_ICONS.find(i => i.key === f.icon) || FILE_ICONS[0];
+    const color = f.icon_color || '';
+    return '<svg class="file-item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="' + (color || 'currentColor') + '" stroke-width="2">' + icon.path + '</svg>';
+  }
+
+  function showFileContextMenu(file, x, y) {
+    $('#file-icon-menu')?.remove();
+    const menu = document.createElement('div');
+    menu.id = 'file-icon-menu';
+    menu.className = 'context-menu';
+    menu.style.display = 'block';
+    menu.style.left = Math.min(x, window.innerWidth - 190) + 'px';
+    menu.style.top = Math.min(y, window.innerHeight - 360) + 'px';
+
+    const iconsHTML = FILE_ICONS.map(ic =>
+      '<div class="ctx-icon-swatch' + ((file.icon || 'default') === ic.key ? ' active' : '') + '" data-icon="' + ic.key + '" title="' + ic.name + '">' +
+        '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' + ic.path + '</svg>' +
+      '</div>'
+    ).join('');
+
+    let colorsHTML = '<div class="ctx-color ctx-none' + (!file.icon_color ? ' active' : '') + '" data-color="" title="No color">✕</div>';
+    FOLDER_COLORS.forEach(c => {
+      colorsHTML += '<div class="ctx-color' + (file.icon_color === c.value ? ' active' : '') + '" data-color="' + c.value + '" style="background:' + c.value + '" title="' + c.name + '"></div>';
+    });
+
+    menu.innerHTML =
+      '<button class="context-menu-item" data-action="pin">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>' +
+        (file.is_pinned ? 'Unpin' : 'Pin') + '</button>' +
+      '<button class="context-menu-item" data-action="share">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98"/></svg>' +
+        'Share</button>' +
+      '<button class="context-menu-item" data-action="download">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>' +
+        'Download</button>' +
+      '<div class="context-menu-divider"></div>' +
+      '<div class="context-menu-label">Icon</div>' +
+      '<div class="ctx-icons-grid">' + iconsHTML + '</div>' +
+      '<div class="context-menu-divider"></div>' +
+      '<div class="context-menu-label">Color</div>' +
+      '<div class="context-menu-colors">' + colorsHTML + '</div>' +
+      '<div class="context-menu-divider"></div>' +
+      '<button class="context-menu-item context-menu-item-danger" data-action="delete">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>' +
+        'Delete</button>';
+    document.body.appendChild(menu);
+
+    menu.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const iconSwatch = e.target.closest('.ctx-icon-swatch');
+      if (iconSwatch) {
+        const icon = iconSwatch.dataset.icon;
+        file.icon = icon === 'default' ? null : icon;
+        await api.updateFile(file.id, { icon: file.icon });
+        menu.querySelectorAll('.ctx-icon-swatch').forEach(s => s.classList.toggle('active', s.dataset.icon === icon));
+        renderSidebar();
+        return;
+      }
+      const colorSwatch = e.target.closest('.ctx-color');
+      if (colorSwatch) {
+        const color = colorSwatch.dataset.color;
+        file.icon_color = color || null;
+        await api.updateFile(file.id, { icon_color: file.icon_color });
+        menu.querySelectorAll('.ctx-color').forEach(s => s.classList.toggle('active', s.dataset.color === color));
+        renderSidebar();
+        return;
+      }
+      const actionBtn = e.target.closest('[data-action]');
+      const action = actionBtn?.dataset.action;
+      if (action === 'pin') { await withLoading(actionBtn, () => togglePin(file.id, !file.is_pinned)); menu.remove(); return; }
+      if (action === 'share') { menu.remove(); shareCurrentFile(file.id); return; }
+      if (action === 'download') { menu.remove(); window.location.href = '/api/files/' + file.id + '/download'; return; }
+      if (action === 'delete') { menu.remove(); deleteFile(file.id); return; }
+    });
+
+    const closeMenu = (e) => {
+      if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', closeMenu); document.removeEventListener('contextmenu', closeMenu); }
+    };
+    setTimeout(() => { document.addEventListener('click', closeMenu); document.addEventListener('contextmenu', closeMenu); }, 0);
+  }
+
   // Build color swatches
   let colorsHTML = '<div class="ctx-color ctx-none" data-color="" title="No color">✕</div>';
   FOLDER_COLORS.forEach(c => { colorsHTML += '<div class="ctx-color" data-color="' + c.value + '" style="background:' + c.value + '" title="' + c.name + '"></div>'; });
@@ -673,6 +1051,12 @@ graph TD
     startFolderRename(folder);
   });
 
+  $('#ctx-download-folder').addEventListener('click', () => {
+    ctxMenu.style.display = 'none';
+    if (!ctxFolderId) return;
+    window.location.href = '/api/folders/' + ctxFolderId + '/download';
+  });
+
   document.addEventListener('click', (e) => { if (!e.target.closest('.context-menu')) ctxMenu.style.display = 'none'; });
   document.addEventListener('contextmenu', (e) => {
     if (!e.target.closest('.folder-header')) { ctxMenu.style.display = 'none'; return; }
@@ -712,7 +1096,12 @@ graph TD
     rootFolders.forEach(folder => fileList.appendChild(buildFolderEl(folder)));
     rootFiles.forEach(f => fileList.appendChild(buildFileEl(f)));
     fileList.addEventListener('dragover', (e) => { if (!dragItem) return; e.preventDefault(); });
-    fileList.addEventListener('drop', async (e) => { e.preventDefault(); fileList.classList.remove('drag-over-root'); if (dragType === 'file' && dragItem) { await api.updateFile(dragItem, { folder_id: null }); await loadAll(); } });
+    fileList.addEventListener('drop', async (e) => {
+      e.preventDefault(); fileList.classList.remove('drag-over-root');
+      if (!dragItem) return;
+      if (dragType === 'file') { await api.updateFile(dragItem, { folder_id: null }); await loadAll(); }
+      else if (dragType === 'folder') { await api.updateFolder(dragItem, { parent_id: null }); await loadAll(); }
+    });
   }
 
   function buildFolderEl(folder) {
@@ -738,7 +1127,17 @@ graph TD
       const action = e.target.closest('[data-action]')?.dataset.action;
       if (action === 'delete-folder') { e.stopPropagation(); if (confirm('Delete folder "' + folder.name + '"?')) { await api.deleteFolder(folder.id); await loadAll(); } return; }
       if (action === 'add-file') { e.stopPropagation(); const file = await api.createFile('Untitled', '', folder.id); await loadAll(); await switchFile(file.id); fileNameInput.focus(); fileNameInput.select(); return; }
-      folder.collapsed = !folder.collapsed; await api.updateFolder(folder.id, { collapsed: !folder.collapsed }); renderSidebar();
+      // Flip once, then both draw and save that same value. (This used to flip
+      // first and then save the negation, so the server always held the
+      // previous state and a refresh showed folders open/closed backwards.)
+      folder.collapsed = !folder.collapsed;
+      renderSidebar();
+      // Saves for one folder run one after another and each sends the value
+      // as it is *then*: two quick clicks (e.g. the double-click that starts a
+      // rename) can't arrive out of order and leave the server on the older one.
+      const prev = folder._saving || Promise.resolve();
+      folder._saving = prev.then(() => api.updateFolder(folder.id, { collapsed: folder.collapsed })).catch(() => {});
+      await folder._saving;
     });
     header.addEventListener('dblclick', (e) => {
       e.stopPropagation();
@@ -746,9 +1145,38 @@ graph TD
     });
     header.addEventListener('dragstart', (e) => { dragItem = folder.id; dragType = 'folder'; header.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
     header.addEventListener('dragend', () => { header.classList.remove('dragging'); dragItem = null; dragType = null; });
-    header.addEventListener('dragover', (e) => { if (!dragItem || (dragType === 'folder' && dragItem === folder.id)) return; e.preventDefault(); header.classList.add('drag-over'); });
-    header.addEventListener('dragleave', () => header.classList.remove('drag-over'));
-    header.addEventListener('drop', async (e) => { e.preventDefault(); e.stopPropagation(); header.classList.remove('drag-over'); if (dragType === 'file') { await api.updateFile(dragItem, { folder_id: folder.id }); await loadAll(); } else if (dragType === 'folder' && dragItem !== folder.id) { await api.updateFolder(dragItem, { parent_id: folder.id }); await loadAll(); } });
+    header.addEventListener('dragover', (e) => {
+      if (!dragItem || (dragType === 'folder' && dragItem === folder.id)) return;
+      e.preventDefault();
+      header.classList.remove('drag-over', 'drag-over-top', 'drag-over-bottom');
+      if (dragType === 'folder') {
+        // Dropping near the top/bottom edge reorders as a sibling there;
+        // dropping over the middle nests it inside this folder instead.
+        const rect = header.getBoundingClientRect();
+        const offset = (e.clientY - rect.top) / rect.height;
+        if (offset < 0.25) header.classList.add('drag-over-top');
+        else if (offset > 0.75) header.classList.add('drag-over-bottom');
+        else header.classList.add('drag-over');
+      } else {
+        header.classList.add('drag-over');
+      }
+    });
+    header.addEventListener('dragleave', () => header.classList.remove('drag-over', 'drag-over-top', 'drag-over-bottom'));
+    header.addEventListener('drop', async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const insertBefore = header.classList.contains('drag-over-top');
+      const insertAfter = header.classList.contains('drag-over-bottom');
+      header.classList.remove('drag-over', 'drag-over-top', 'drag-over-bottom');
+      if (dragType === 'file') { await api.updateFile(dragItem, { folder_id: folder.id }); await loadAll(); }
+      else if (dragType === 'folder' && dragItem !== folder.id) {
+        if (insertBefore || insertAfter) {
+          await api.updateFolder(dragItem, { parent_id: folder.parent_id || null, sort_order: folder.sort_order + (insertAfter ? 1 : 0) });
+        } else {
+          await api.updateFolder(dragItem, { parent_id: folder.id });
+        }
+        await loadAll();
+      }
+    });
     el.appendChild(header);
     const children = document.createElement('div'); children.className = 'folder-children' + (folder.collapsed ? ' hidden' : '');
     childFolders.forEach(cf => children.appendChild(buildFolderEl(cf)));
@@ -758,8 +1186,11 @@ graph TD
 
   function buildFileEl(f) {
     const el = document.createElement('div'); el.className = 'file-item' + (f.id === activeFileId ? ' active' : ''); el.draggable = true; el.dataset.fileId = f.id;
-    el.innerHTML = `<svg class="file-item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg><span class="file-item-name">${escapeHtml(f.name || 'Untitled')}</span><span class="file-item-pin ${f.is_pinned ? 'pinned' : ''}" data-action="pin" title="Pin"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></span><div class="file-item-actions"><button data-action="delete" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button></div>`;
-    el.addEventListener('click', (e) => { const action = e.target.closest('[data-action]')?.dataset.action; if (action === 'delete') { deleteFile(f.id); e.stopPropagation(); return; } if (action === 'pin') { togglePin(f.id, !f.is_pinned); e.stopPropagation(); return; } switchFile(f.id); });
+    const lockHTML = f.is_shared ? '' : '<span class="file-item-lock" title="Private - not shared"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></span>';
+    const pinHTML = f.is_pinned ? '<span class="file-item-pin pinned" title="Pinned"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></span>' : '';
+    el.innerHTML = `${fileIconHTML(f)}<span class="file-item-name">${escapeHtml(f.name || 'Untitled')}</span>${lockHTML}${pinHTML}`;
+    el.addEventListener('click', () => switchFile(f.id));
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); showFileContextMenu(f, e.clientX, e.clientY); });
     el.addEventListener('dragstart', (e) => { dragItem = f.id; dragType = 'file'; el.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; });
     el.addEventListener('dragend', () => { el.classList.remove('dragging'); dragItem = null; dragType = null; });
     el.addEventListener('dragover', (e) => { if (!dragItem || dragType !== 'file' || dragItem === f.id) return; e.preventDefault(); el.classList.add('drag-over'); });
@@ -774,18 +1205,310 @@ graph TD
   }
 
   // ===== File management =====
-  async function switchFile(id) {
+  // fileId -> { name, content, updated_at } for files already opened this
+  // session, so switching back to one is instant instead of a fresh fetch.
+  const fileCache = new Map();
+
+  async function switchFile(id, forceRefresh) {
+    if (id === activeFileId && cm.getValue() && !forceRefresh) return; // already open, nothing to fetch
+
+    // Flush any not-yet-saved edit on the file we're leaving *before*
+    // touching activeFileId or cm's buffer - otherwise a pending debounce
+    // fires later against the wrong (new) file id, or reads content that's
+    // already been replaced, silently dropping the edit.
+    await flushPendingSave();
+
+    // Instant feedback: highlight the clicked row before anything else, so a
+    // click never looks like it did nothing.
+    const prevActiveEl = fileList.querySelector('.file-item.active');
+    if (prevActiveEl) prevActiveEl.classList.remove('active');
+    const rowEl = fileList.querySelector('.file-item[data-file-id="' + id + '"]');
+    if (rowEl) rowEl.classList.add('active');
+
     activeFileId = id;
     localStorage.setItem('md-active-file', id);
+
+    const cached = !forceRefresh && fileCache.get(id);
+    if (cached) {
+      // No network wait for a file we've already opened this session -
+      // apply it immediately, then quietly check in the background whether
+      // it's still current (surfaces via the existing stale-file banner).
+      cm.setValue(cached.content);
+      fileNameInput.value = cached.name;
+      hideStaleBanner();
+      renderSidebar(); render(); showSaveStatus('Loaded');
+      revalidateFileCache(id);
+      return;
+    }
+
+    if (rowEl) rowEl.querySelector('.file-item-icon')?.classList.add('spinner-icon');
+    showSaveStatus('Loading...');
     const file = await api.getFile(id);
+    fileCache.set(id, { name: file.name, content: file.content, updated_at: file.updated_at });
     cm.setValue(file.content);
     fileNameInput.value = file.name;
+    hideStaleBanner();
     renderSidebar(); render(); showSaveStatus('Loaded');
   }
 
-  async function createNewFile(folderId) {
-    const file = await api.createFile('Untitled', '', folderId || null);
+  async function revalidateFileCache(id) {
+    if (id === activeFileId && staleBannerShown) return; // Reload will fetch fresh anyway
+    try {
+      const file = await api.getFile(id);
+      const cached = fileCache.get(id);
+      if (!cached || file.updated_at === cached.updated_at) return;
+      fileCache.set(id, { name: file.name, content: file.content, updated_at: file.updated_at });
+      // Only the file you're actually looking at is a real conflict - one you
+      // haven't opened just gets its cache refreshed silently, so clicking
+      // into it later shows the new content with nothing to reload.
+      if (id === activeFileId) showStaleBanner();
+    } catch (e) {}
+  }
+
+  // ===== Stale-file detection (edited elsewhere: another tab, or the API) =====
+  function showStaleBanner() {
+    staleBannerShown = true;
+    $('#stale-banner').classList.add('show');
+  }
+  function hideStaleBanner() {
+    staleBannerShown = false;
+    $('#stale-banner').classList.remove('show');
+  }
+  function startStaleCheck() {
+    setInterval(async () => {
+      if (document.hidden || isSharedView) return;
+      // Sweep every file opened this session, not just the active one, so a
+      // file changed elsewhere while you're not looking at it gets its cache
+      // refreshed silently - open it later and it's already current, no
+      // reload needed. The banner only fires for the file you're on right
+      // now, since that's the only case where someone else's change and
+      // yours could actually collide.
+      await Promise.all([...fileCache.keys()].map((id) => revalidateFileCache(id)));
+    }, 8000);
+  }
+
+  async function createNewFile(folderId, name, content) {
+    const file = await api.createFile(name || 'Untitled', content || '', folderId || null);
     await loadAll(); await switchFile(file.id); fileNameInput.focus(); fileNameInput.select();
+  }
+
+  function showNewFileMenu() {
+    const btn = $('#btn-new-file');
+    const existing = $('#new-file-menu');
+    if (existing) { existing.remove(); return; }
+
+    const rect = btn.getBoundingClientRect();
+    const menu = document.createElement('div');
+    menu.id = 'new-file-menu';
+    menu.className = 'context-menu';
+    menu.style.display = 'block';
+    menu.style.top = (rect.bottom + 6) + 'px';
+    menu.style.left = rect.left + 'px';
+    menu.innerHTML =
+      '<button class="context-menu-item" data-action="blank">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/><path d="M13 2v7h7"/></svg>' +
+        'Blank file</button>' +
+      '<div class="context-menu-divider"></div>' +
+      '<div class="context-menu-label">Templates</div>' +
+      '<div class="ctx-templates-slot" style="padding:6px 8px;color:var(--text-3);font-size:12px">Loading...</div>' +
+      '<div class="context-menu-divider"></div>' +
+      '<button class="context-menu-item" data-action="manage">' +
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>' +
+        'Manage templates…</button>';
+    document.body.appendChild(menu);
+
+    let templates = [];
+    api.getTemplates().then(list => {
+      templates = list;
+      const slot = menu.querySelector('.ctx-templates-slot');
+      if (!slot) return; // menu already closed
+      if (!list.length) { slot.textContent = 'No templates yet'; return; }
+      slot.outerHTML = list.map(t =>
+        '<div class="context-menu-item" data-action="use" data-id="' + t.id + '">' +
+          '<span class="file-template-name">' + escapeHtml(t.name) + '</span>' +
+        '</div>'
+      ).join('');
+    });
+
+    menu.addEventListener('click', async (e) => {
+      const item = e.target.closest('[data-action]');
+      if (!item) return;
+      menu.remove();
+      if (item.dataset.action === 'blank') {
+        await createNewFile();
+      } else if (item.dataset.action === 'manage') {
+        openTemplateManager();
+      } else if (item.dataset.action === 'use') {
+        const t = templates.find(x => x.id === item.dataset.id);
+        if (t) await createNewFile(null, t.name, t.content);
+      }
+    });
+
+    const closeMenu = (e) => {
+      if (!menu.contains(e.target) && e.target !== btn) { menu.remove(); document.removeEventListener('click', closeMenu); }
+    };
+    setTimeout(() => document.addEventListener('click', closeMenu), 0);
+  }
+
+  // ===== API Keys manager =====
+  async function openApiKeysManager() {
+    const keys = await api.getApiKeys();
+    renderApiKeysManager(keys);
+    modalOverlay.classList.add('show');
+  }
+
+  function formatApiKeyDate(iso) {
+    if (!iso) return 'Never used';
+    const d = new Date(iso);
+    return 'Last used ' + d.toLocaleDateString();
+  }
+
+  function renderApiKeysManager(keys) {
+    modalTitle.textContent = 'API Keys';
+    const listHTML = keys.length
+      ? '<div class="template-list" style="max-height:260px;overflow-y:auto;margin-bottom:12px">' +
+        keys.map(k =>
+          '<div class="file-item" style="cursor:default">' +
+            '<svg class="file-item-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="5"/><line x1="11.5" y1="11.5" x2="21" y2="21"/><line x1="15" y1="15" x2="18" y2="12"/><line x1="18" y1="18" x2="21" y2="15"/></svg>' +
+            '<span class="file-item-name" title="' + escapeHtml(k.name) + '">' + escapeHtml(k.name) +
+              '<span style="color:var(--text-3);font-weight:400;margin-left:6px;font-family:var(--font-mono,monospace);font-size:11px">' + escapeHtml(k.key_prefix) + '…</span>' +
+              '<span style="color:var(--text-3);font-weight:400;margin-left:6px;font-size:11px">' + formatApiKeyDate(k.last_used_at) + '</span>' +
+            '</span>' +
+            '<div class="file-item-actions" style="opacity:1">' +
+              '<button data-action="revoke" data-id="' + k.id + '" title="Revoke"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button>' +
+            '</div>' +
+          '</div>'
+        ).join('') +
+        '</div>'
+      : '<p style="color:var(--text-3);font-size:13px;text-align:center;padding:16px 0">No API keys yet.</p>';
+
+    modalBody.innerHTML = listHTML +
+      '<div class="apikey-create-row">' +
+        '<input type="text" id="apikey-name-input" class="file-name-input" placeholder="Key name (e.g. Zapier)">' +
+        '<button class="btn-new-file" id="apikey-create-btn">Create</button>' +
+      '</div>' +
+      '<p class="share-info">Full read/write access to files, folders, and templates. <a href="/docs.html" target="_blank" rel="noopener noreferrer">View API docs</a></p>';
+
+    modalBody.querySelectorAll('[data-action="revoke"]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const k = keys.find(x => x.id === btn.dataset.id);
+        if (!confirm('Revoke API key "' + (k?.name || '') + '"? Any integration using it will stop working.')) return;
+        await withLoading(e.currentTarget, () => api.deleteApiKey(btn.dataset.id));
+        renderApiKeysManager(await api.getApiKeys());
+      });
+    });
+
+    $('#apikey-create-btn').addEventListener('click', async (e) => {
+      const name = $('#apikey-name-input').value.trim() || 'API Key';
+      const created = await withLoading(e.currentTarget, () => api.createApiKey(name));
+      showCreatedApiKey(created);
+    });
+    $('#apikey-name-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#apikey-create-btn').click(); });
+  }
+
+  function showCreatedApiKey(created) {
+    modalTitle.textContent = 'API key created';
+    modalBody.innerHTML =
+      '<p style="font-size:13px;color:var(--text-2);margin-bottom:10px">Copy this key now - it won\'t be shown again.</p>' +
+      '<div class="share-url-box" style="margin-bottom:16px">' +
+        '<input type="text" id="apikey-raw-value" value="' + escapeHtml(created.raw_key) + '" readonly style="font-family:var(--font-mono,monospace);font-size:12px">' +
+        '<button id="apikey-copy-btn">Copy</button>' +
+      '</div>' +
+      '<button class="btn-new-file" id="apikey-done-btn" style="margin:0;width:100%">Done</button>';
+    $('#apikey-copy-btn').addEventListener('click', () => {
+      navigator.clipboard.writeText(created.raw_key).then(() => { $('#apikey-copy-btn').textContent = 'Copied!'; setTimeout(() => { $('#apikey-copy-btn').textContent = 'Copy'; }, 2000); });
+    });
+    $('#apikey-done-btn').addEventListener('click', async () => renderApiKeysManager(await api.getApiKeys()));
+  }
+
+  // ===== Template manager =====
+  async function openTemplateManager() {
+    const templates = await api.getTemplates();
+    renderTemplateManager(templates);
+    modalOverlay.classList.add('show');
+  }
+
+  function renderTemplateManager(templates) {
+    modalTitle.textContent = 'Manage templates';
+    if (!templates.length) {
+      modalBody.innerHTML = '<p style="color:var(--text-3);font-size:13px;text-align:center;padding:24px 0">No templates yet. Use "Save as template" from the toolbar to create one.</p>';
+      return;
+    }
+    modalBody.innerHTML = '<div class="template-list" style="max-height:340px;overflow-y:auto">' +
+      templates.map(t =>
+        '<div class="file-item" draggable="true" data-id="' + t.id + '">' +
+          '<svg class="file-item-icon" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="8" cy="6" r="1.5"/><circle cx="16" cy="6" r="1.5"/><circle cx="8" cy="12" r="1.5"/><circle cx="16" cy="12" r="1.5"/><circle cx="8" cy="18" r="1.5"/><circle cx="16" cy="18" r="1.5"/></svg>' +
+          '<span class="file-item-name">' + escapeHtml(t.name) + '</span>' +
+          '<div class="file-item-actions">' +
+            '<button data-action="rename" data-id="' + t.id + '" title="Rename"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>' +
+            '<button data-action="edit" data-id="' + t.id + '" title="Edit content"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg></button>' +
+            '<button data-action="delete" data-id="' + t.id + '" title="Delete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0l-1 14a2 2 0 01-2 2H7a2 2 0 01-2-2L4 6"/></svg></button>' +
+          '</div>' +
+        '</div>'
+      ).join('') +
+      '</div>';
+
+    const list = modalBody.querySelector('.template-list');
+    let dragId = null;
+    list.querySelectorAll('.file-item').forEach(row => {
+      row.addEventListener('dragstart', () => { dragId = row.dataset.id; row.style.opacity = '0.4'; });
+      row.addEventListener('dragend', () => { row.style.opacity = ''; });
+      row.addEventListener('dragover', (e) => e.preventDefault());
+      row.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        if (!dragId || dragId === row.dataset.id) return;
+        const from = templates.findIndex(t => t.id === dragId);
+        const to = templates.findIndex(t => t.id === row.dataset.id);
+        if (from < 0 || to < 0) return;
+        const [moved] = templates.splice(from, 1);
+        templates.splice(to, 0, moved);
+        await Promise.all(templates.map((t, i) => api.updateTemplate(t.id, { sort_order: i })));
+        renderTemplateManager(templates);
+      });
+    });
+
+    modalBody.querySelectorAll('[data-action]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        const t = templates.find(x => x.id === id);
+        if (!t) return;
+        if (btn.dataset.action === 'delete') {
+          if (!confirm('Delete template "' + t.name + '"?')) return;
+          await withLoading(btn, () => api.deleteTemplate(id));
+          renderTemplateManager(templates.filter(x => x.id !== id));
+        } else if (btn.dataset.action === 'rename') {
+          const nameEl = btn.closest('.file-item').querySelector('.file-item-name');
+          const input = document.createElement('input');
+          input.type = 'text'; input.value = t.name; input.className = 'file-name-input'; input.style.flex = '1';
+          nameEl.replaceWith(input);
+          input.focus(); input.select();
+          const commit = async () => {
+            const newName = input.value.trim() || t.name;
+            t.name = newName;
+            await api.updateTemplate(id, { name: newName });
+            renderTemplateManager(templates);
+          };
+          input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur(); if (ev.key === 'Escape') { input.value = t.name; input.blur(); } });
+          input.addEventListener('blur', commit, { once: true });
+        } else if (btn.dataset.action === 'edit') {
+          modalTitle.textContent = 'Edit template - ' + t.name;
+          modalBody.innerHTML =
+            '<textarea id="template-content-input" spellcheck="false" style="width:100%;min-height:280px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text);font-family:var(--font-mono, monospace);font-size:12.5px;resize:vertical">' + escapeHtml(t.content) + '</textarea>' +
+            '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">' +
+              '<button class="btn-new-folder" id="template-edit-back" style="margin:0;width:auto">Back</button>' +
+              '<button class="btn-new-file" id="template-edit-save" style="margin:0;width:auto">Save</button>' +
+            '</div>';
+          $('#template-edit-back').addEventListener('click', () => renderTemplateManager(templates));
+          $('#template-edit-save').addEventListener('click', async (e) => {
+            const content = $('#template-content-input').value;
+            t.content = content;
+            await withLoading(e.currentTarget, () => api.updateTemplate(id, { content }));
+            renderTemplateManager(templates);
+          });
+        }
+      });
+    });
   }
 
   async function deleteFile(id) {
@@ -793,6 +1516,7 @@ graph TD
     const f = files.find(x => x.id === id);
     if (!confirm('Delete "' + (f?.name || 'Untitled') + '"?')) return;
     await api.deleteFile(id); files = files.filter(x => x.id !== id);
+    fileCache.delete(id);
     if (id === activeFileId) await switchFile(files[0].id);
     renderSidebar(); showToast('File deleted');
   }
@@ -805,11 +1529,49 @@ graph TD
   }
 
   // ===== Auto-save =====
+  // Pending edits are captured (file id + value) at schedule time, not read
+  // lazily when the timer fires - if the user switches files before the
+  // debounce elapses, activeFileId and cm's buffer have both already moved
+  // on to the new file, so reading them late would silently drop the edit
+  // (or worse, save the new file's content over itself under the old id).
+  let pendingSaveFileId = null;
+  let pendingContent = null;
+  let pendingName = null;
+
   function scheduleSave() {
+    if (!activeFileId) return;
     clearTimeout(saveTimer); showSaveStatus('Saving...');
-    saveTimer = setTimeout(async () => { if (!activeFileId) return; await api.updateFile(activeFileId, { content: cm.getValue() }); showSaveStatus('Saved'); }, 500);
+    pendingSaveFileId = activeFileId;
+    pendingContent = cm.getValue();
+    saveTimer = setTimeout(flushPendingSave, 500);
   }
-  function showSaveStatus(text) { saveStatus.textContent = text; if (text === 'Saved') setTimeout(() => { if (saveStatus.textContent === 'Saved') saveStatus.textContent = ''; }, 2000); }
+
+  async function flushPendingSave() {
+    clearTimeout(saveTimer); saveTimer = null;
+    if (!pendingSaveFileId) return;
+    const id = pendingSaveFileId;
+    const patch = {};
+    if (pendingContent !== null) patch.content = pendingContent;
+    if (pendingName !== null) patch.name = pendingName;
+    pendingSaveFileId = null; pendingContent = null; pendingName = null;
+    if (!Object.keys(patch).length) return;
+
+    const updated = await api.updateFile(id, patch);
+    if (updated?.updated_at) {
+      const cached = fileCache.get(id);
+      fileCache.set(id, {
+        name: patch.name !== undefined ? patch.name : (cached?.name ?? updated.name),
+        content: patch.content !== undefined ? patch.content : (cached?.content ?? updated.content),
+        updated_at: updated.updated_at
+      });
+    }
+    if (patch.name !== undefined) { const f = files.find(x => x.id === id); if (f) { f.name = patch.name; renderSidebar(); } }
+    showSaveStatus('Saved');
+  }
+  function showSaveStatus(text) {
+    const el = $('#stat-save');
+    if (el) { el.textContent = text; if (text === 'Saved') setTimeout(() => { if (el.textContent === 'Saved') el.textContent = ''; }, 2000); }
+  }
 
   // ===== Image upload =====
   function setupImageUpload() {
@@ -883,28 +1645,102 @@ graph TD
   function setupDivider() {
     const divider = $('#divider'), container = $('.editor-container'), editorPane = $('#editor-pane'), previewPane = $('#preview-pane');
     let dragging = false;
-    divider.addEventListener('mousedown', (e) => { dragging = true; divider.classList.add('dragging'); document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none'; e.preventDefault(); });
-    document.addEventListener('mousemove', (e) => { if (!dragging) return; const rect = container.getBoundingClientRect(); const pct = Math.max(20, Math.min(80, ((e.clientX - rect.left) / rect.width) * 100)); editorPane.style.flex = 'none'; previewPane.style.flex = 'none'; editorPane.style.width = pct + '%'; previewPane.style.width = (100 - pct) + '%'; cm.refresh(); });
+    divider.addEventListener('mousedown', (e) => { dragging = true; divider.classList.add('dragging'); document.body.style.cursor = layoutMode === 'split-h' ? 'row-resize' : 'col-resize'; document.body.style.userSelect = 'none'; e.preventDefault(); });
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const rect = container.getBoundingClientRect();
+      editorPane.style.flex = 'none'; previewPane.style.flex = 'none';
+      if (layoutMode === 'split-h') {
+        const pct = Math.max(20, Math.min(80, ((e.clientY - rect.top) / rect.height) * 100));
+        editorPane.style.height = pct + '%'; previewPane.style.height = (100 - pct) + '%';
+      } else {
+        const pct = Math.max(20, Math.min(80, ((e.clientX - rect.left) / rect.width) * 100));
+        editorPane.style.width = pct + '%'; previewPane.style.width = (100 - pct) + '%';
+      }
+      cm.refresh();
+    });
     document.addEventListener('mouseup', () => { if (!dragging) return; dragging = false; divider.classList.remove('dragging'); document.body.style.cursor = ''; document.body.style.userSelect = ''; cm.refresh(); });
+  }
+
+  // ===== Layout mode (split-v / split-h / full) =====
+  // On a phone there's no room to show both panes at a readable size, so a
+  // first-time visitor there starts in fullscreen (one pane + toggle)
+  // instead of the split-vertical default that makes sense on desktop.
+  let layoutMode = localStorage.getItem('md-layout-mode') || (window.innerWidth <= 768 ? 'full' : 'split-v');
+  let fullView = localStorage.getItem('md-layout-full-view') || 'editor';
+
+  const LAYOUT_ICONS = {
+    'split-v': '<rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="16" rx="1"/>',
+    'split-h': '<rect x="3" y="4" width="18" height="7" rx="1"/><rect x="3" y="13" width="18" height="7" rx="1"/>',
+    'full': '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>'
+  };
+
+  function applyLayoutMode(mode) {
+    layoutMode = mode;
+    localStorage.setItem('md-layout-mode', mode);
+    const container = $('.editor-container'), editorPane = $('#editor-pane'), previewPane = $('#preview-pane');
+
+    // Bỏ kích thước kéo tay từ chế độ trước để mỗi lần chuyển layout đều bắt đầu ở tỉ lệ 50/50
+    editorPane.style.flex = ''; editorPane.style.width = ''; editorPane.style.height = '';
+    previewPane.style.flex = ''; previewPane.style.width = ''; previewPane.style.height = '';
+
+    container.classList.toggle('layout-stacked', mode === 'split-h');
+    container.classList.toggle('layout-full', mode === 'full');
+    if (mode !== 'full') { editorPane.classList.remove('full-visible'); previewPane.classList.remove('full-visible'); }
+
+    $('#layout-main-icon').innerHTML = LAYOUT_ICONS[mode];
+    $$('.layout-option[data-mode]').forEach((btn) => btn.classList.toggle('active', btn.dataset.mode === mode));
+    $('#layout-view-row').style.display = mode === 'full' ? 'flex' : 'none';
+    $('#layout-view-divider').style.display = mode === 'full' ? 'block' : 'none';
+
+    if (mode === 'full') applyFullView(fullView);
+
+    requestAnimationFrame(() => cm.refresh());
+  }
+
+  function applyFullView(view) {
+    fullView = view;
+    localStorage.setItem('md-layout-full-view', view);
+    $('#editor-pane').classList.toggle('full-visible', view === 'editor');
+    $('#preview-pane').classList.toggle('full-visible', view === 'preview');
+    $('#full-view-btn-editor').classList.toggle('active', view === 'editor');
+    $('#full-view-btn-preview').classList.toggle('active', view === 'preview');
+    requestAnimationFrame(() => cm.refresh());
+  }
+
+  function setupLayoutSwitch() {
+    const control = $('#layout-control');
+    $$('.layout-option[data-mode]').forEach((btn) => btn.addEventListener('click', () => { applyLayoutMode(btn.dataset.mode); control.classList.remove('open'); }));
+    $('#full-view-btn-editor').addEventListener('click', () => { applyFullView('editor'); control.classList.remove('open'); });
+    $('#full-view-btn-preview').addEventListener('click', () => { applyFullView('preview'); control.classList.remove('open'); });
+
+    // The dropdown opens on hover for a mouse, but touch has no hover -
+    // tapping the button toggles it open/closed instead, and tapping
+    // anywhere else closes it.
+    $('#layout-btn-main').addEventListener('click', (e) => { e.stopPropagation(); control.classList.toggle('open'); });
+    document.addEventListener('click', (e) => { if (!control.contains(e.target)) control.classList.remove('open'); });
+
+    applyLayoutMode(layoutMode);
   }
 
   // ===== Dark mode =====
   function applyDark(dark) {
     document.body.classList.toggle('dark', dark);
-    $('#toggle-dark').checked = dark;
     localStorage.setItem('md-dark', dark ? '1' : '0');
     cm.setOption('theme', dark ? 'dark' : 'default');
     $('#hljs-light').disabled = dark;
     $('#hljs-dark').disabled = !dark;
     initMermaid();
+    mermaidCache.clear(); // cached SVGs have the old theme's colors baked in
     if (cm.getValue()) render();
   }
 
   // ===== Share =====
-  async function shareCurrentFile() {
-    if (!activeFileId) return;
+  async function shareCurrentFile(fileId) {
+    const fid = fileId || activeFileId;
+    if (!fid) return;
 
-    const file = await api.getFile(activeFileId);
+    const file = await api.getFile(fid);
     const hasPublic = !!file.share_id;
     const hasPrivate = !!(file.private_view_token || file.private_edit_token);
 
@@ -956,60 +1792,60 @@ graph TD
 
     // Generate public
     if ($('#btn-gen-public')) {
-      $('#btn-gen-public').addEventListener('click', async () => {
-        const r = await api.shareFile(activeFileId);
-        modalOverlay.classList.remove('show');
+      $('#btn-gen-public').addEventListener('click', async (e) => {
+        await withLoading(e.currentTarget, () => api.shareFile(fid));
         showToast('Public link created');
-        shareCurrentFile();
+        await loadAll();
+        shareCurrentFile(fid);
       });
     }
 
     // Revoke public
     if ($('#revoke-pub')) {
-      $('#revoke-pub').addEventListener('click', async () => {
+      $('#revoke-pub').addEventListener('click', async (e) => {
         if (!confirm('Revoke public link? Anyone with the link will lose access.')) return;
-        await fetch('/api/files/' + activeFileId + '/share', { method: 'DELETE' });
-        modalOverlay.classList.remove('show');
+        await withLoading(e.currentTarget, () => fetch('/api/files/' + fid + '/share', { method: 'DELETE' }));
         showToast('Public link revoked');
-        shareCurrentFile();
+        await loadAll();
+        shareCurrentFile(fid);
       });
     }
 
     // Revoke private view
     if ($('#revoke-view')) {
-      $('#revoke-view').addEventListener('click', async () => {
+      $('#revoke-view').addEventListener('click', async (e) => {
         if (!confirm('Revoke private view link?')) return;
-        await fetch('/api/files/' + activeFileId + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'view' }) });
-        modalOverlay.classList.remove('show');
+        await withLoading(e.currentTarget, () => fetch('/api/files/' + fid + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'view' }) }));
         showToast('View link revoked');
-        shareCurrentFile();
+        await loadAll();
+        shareCurrentFile(fid);
       });
     }
 
     // Revoke private edit
     if ($('#revoke-edit')) {
-      $('#revoke-edit').addEventListener('click', async () => {
+      $('#revoke-edit').addEventListener('click', async (e) => {
         if (!confirm('Revoke private edit link?')) return;
-        await fetch('/api/files/' + activeFileId + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'edit' }) });
-        modalOverlay.classList.remove('show');
+        await withLoading(e.currentTarget, () => fetch('/api/files/' + fid + '/share-private', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'edit' }) }));
         showToast('Edit link revoked');
-        shareCurrentFile();
+        await loadAll();
+        shareCurrentFile(fid);
       });
     }
 
     // Generate private
     if ($('#btn-gen-private')) {
-      $('#btn-gen-private').addEventListener('click', async () => {
+      $('#btn-gen-private').addEventListener('click', async (e) => {
         const viewPw = $('#share-view-pw')?.value;
         const editPw = $('#share-edit-pw')?.value;
         if (!viewPw && !editPw) { showToast('Enter at least one password'); return; }
-        await fetch('/api/files/' + activeFileId + '/share-private', {
+        await withLoading(e.currentTarget, () => fetch('/api/files/' + fid + '/share-private', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ view_password: viewPw, edit_password: editPw })
-        });
-        modalOverlay.classList.remove('show');
+        }));
         showToast('Private links generated');
-        shareCurrentFile();
+        await loadAll();
+        shareCurrentFile(fid);
       });
     }
   }
@@ -1107,7 +1943,7 @@ graph TD
     if (mode === 'private-edit') {
       cm.setOption('readOnly', false);
       fileNameInput.readOnly = false;
-      bannerText.textContent = 'Private edit mode — changes are saved';
+      bannerText.textContent = 'Private edit mode - changes are saved';
       forkBtn.style.display = 'none';
 
       cm.on('changes', () => {
@@ -1147,13 +1983,22 @@ graph TD
     render();
     banner.style.display = 'block';
     $('.main').style.marginTop = '38px';
-    sidebar.classList.add('collapsed');
-    $('#btn-open-sidebar').style.display = 'none';
+    closeSidebar();
     $('#btn-close-banner').addEventListener('click', () => { banner.style.display = 'none'; $('.main').style.marginTop = '0'; });
   }
 
   // ===== Toolbar insert helpers =====
   function insertText(text) { cm.replaceSelection(text); cm.focus(); scheduleRender(); scheduleSave(); }
+  function buildMarkdownTable(cols, rows) {
+    cols = Math.max(1, Math.min(20, cols || 2));
+    rows = Math.max(1, Math.min(50, rows || 1));
+    const header = '| ' + Array.from({ length: cols }, (_, i) => 'Column ' + (i + 1)).join(' | ') + ' |';
+    const divider = '| ' + Array.from({ length: cols }, () => '--------').join(' | ') + ' |';
+    const bodyRows = Array.from({ length: rows }, (_, r) =>
+      '| ' + Array.from({ length: cols }, (_, c) => 'Cell ' + (r + 1) + '.' + (c + 1)).join(' | ') + ' |'
+    );
+    return '\n' + [header, divider, ...bodyRows].join('\n') + '\n';
+  }
   function insertAround(before, after) {
     const sel = cm.getSelection() || 'text';
     cm.replaceSelection(before + sel + after);
@@ -1166,11 +2011,164 @@ graph TD
     cm.focus(); scheduleRender(); scheduleSave();
   }
 
-  // ===== Export PDF =====
-  function exportPDF() {
+  // ===== Download: PDF / Markdown / HTML =====
+  // Always light-themed and free of UI chrome (copy/wrap/zoom buttons), so the
+  // output looks the same whether the app is in dark mode or not.
+  const EXPORT_CSS = [
+    '*{box-sizing:border-box}',
+    'html{-webkit-print-color-adjust:exact;print-color-adjust:exact}',
+    'body{margin:0;padding:32px 24px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,"Noto Sans",sans-serif;font-size:15px;line-height:1.7;color:#1f2328;background:#fff}',
+    '.md{max-width:820px;margin:0 auto;overflow-wrap:anywhere}',
+    // Page frame: the whole document sits in one table so its <thead> (the
+    // faint source/time stamp) repeats at the top of every printed page.
+    '.page-frame{width:100%;border-collapse:collapse;border:0}',
+    '.page-frame>thead>tr>th,.page-frame>tbody>tr>td{border:0;padding:0;background:none;text-align:inherit;font-weight:400;vertical-align:top}',
+    '.page-frame>tbody>tr{break-inside:auto}',
+    '.export-meta{max-width:820px;margin:0 auto;padding:0 0 14px;text-align:right;font-size:11px;font-style:italic;color:#9aa1a9}',
+    'h1,h2,h3,h4,h5,h6{line-height:1.3;margin:1.4em 0 .5em;font-weight:650;break-after:avoid}',
+    'h1{font-size:2em;border-bottom:1px solid #d8dee4;padding-bottom:.3em}',
+    'h2{font-size:1.5em;border-bottom:1px solid #d8dee4;padding-bottom:.3em}',
+    'h3{font-size:1.25em}h4{font-size:1.05em}',
+    'p,ul,ol,blockquote,table,.code-block-wrapper,.mermaid-rendered{margin:0 0 14px}',
+    'ul,ol{padding-left:1.6em}li>ul,li>ol{margin:0}',
+    'a{color:#0969da;text-decoration:none}',
+    'hr{border:0;border-top:1px solid #d8dee4;margin:22px 0}',
+    'blockquote{border-left:4px solid #d0d7de;padding:2px 0 2px 16px;color:#59636e}',
+    'img,svg{max-width:100%;height:auto}img{break-inside:avoid}',
+    'input[type=checkbox]{margin-right:6px}li:has(>input[type=checkbox]){list-style:none;margin-left:-1.3em}',
+    'code{font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",Menlo,monospace;font-size:.88em;background:#eff1f3;padding:.15em .4em;border-radius:4px}',
+    ':not(pre)>code{color:#d2042d}',
+    '.code-block-wrapper{border:1px solid #d0d7de;border-radius:8px;background:#f6f8fa;overflow:hidden}',
+    '.code-block-toolbar{display:flex;padding:5px 12px;border-bottom:1px solid #d8dee4;background:#eef1f4}',
+    '.code-block-lang{font-size:11px;font-weight:600;color:#59636e;text-transform:uppercase;letter-spacing:.04em}',
+    // Wrap instead of scroll/clip: a PDF can't scroll, so long lines must break or they get cut off.
+    'pre{margin:0;padding:12px 14px;background:transparent;border:0;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;tab-size:2}',
+    'pre code{display:block;background:none;padding:0;border-radius:0;font-size:12.5px;line-height:1.55;color:#1f2328;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere}',
+    '.md table{border-collapse:collapse;width:100%}',
+    '.md th,.md td{border:1px solid #d0d7de;padding:6px 12px;text-align:left;vertical-align:top;overflow-wrap:anywhere}',
+    '.md thead th{background:#f6f8fa}.md tr{break-inside:avoid}',
+    '.mermaid-rendered{text-align:center;break-inside:avoid}',
+    '.hljs-comment,.hljs-quote{color:#6e7781;font-style:italic}',
+    '.hljs-keyword,.hljs-selector-tag,.hljs-doctag,.hljs-template-tag,.hljs-type{color:#cf222e}',
+    '.hljs-string,.hljs-regexp,.hljs-addition,.hljs-meta .hljs-string{color:#0a3069}',
+    '.hljs-number,.hljs-literal,.hljs-attr,.hljs-variable,.hljs-template-variable,.hljs-selector-attr,.hljs-selector-class,.hljs-selector-pseudo,.hljs-meta{color:#0550ae}',
+    '.hljs-title,.hljs-title.function_,.hljs-section{color:#8250df}',
+    '.hljs-built_in,.hljs-symbol,.hljs-bullet,.hljs-link{color:#953800}',
+    '.hljs-name,.hljs-tag,.hljs-selector-id{color:#116329}',
+    '.hljs-attribute,.hljs-property{color:#0550ae}',
+    '.hljs-deletion{color:#82071e;background:#ffebe9}.hljs-addition{background:#dafbe1}',
+    '.hljs-emphasis{font-style:italic}.hljs-strong{font-weight:700}',
+    // Zero page margin: the browser's own header/footer (date, title, URL,
+    // page numbers) lives in the margin, so with no margin there's nowhere to
+    // print it. The visual margins come from side padding plus the repeating
+    // thead (top) / tfoot (bottom) spacers instead.
+    '@page{size:A4;margin:0}',
+    '.page-frame>tfoot>tr>td{border:0;padding:0}.page-foot{height:0}',
+    '@media print{body{padding:0 16mm}.md,.export-meta{max-width:none}.page-frame>thead>tr>th{padding-top:14mm}.page-foot{height:16mm}}'
+  ].join('\n');
+
+  function exportBaseName() {
+    return (fileNameInput.value || 'Untitled').trim().replace(/\.md$/i, '').replace(/[\\/:*?"<>|]+/g, '-') || 'Untitled';
+  }
+
+  function exportMeta() {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return 'Exported from ' + location.host + ' · ' + d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(fr.result); fr.onerror = reject;
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  // A cleaned copy of the rendered preview: no copy/wrap/zoom buttons, no
+  // zoom wrappers, absolute image URLs, and diagrams re-rendered in the light
+  // theme when the app is in dark mode (dark diagrams vanish on white paper).
+  async function buildExportBody({ inlineImages = false } = {}) {
+    const clone = preview.cloneNode(true);
+    clone.querySelectorAll('button, .code-block-actions, .media-zoom-btn').forEach((el) => el.remove());
+    clone.querySelectorAll('.media-wrapper').forEach((w) => w.replaceWith(...w.childNodes));
+    clone.querySelectorAll('[data-code]').forEach((el) => el.removeAttribute('data-code'));
+    clone.querySelectorAll('.wrapped-zoom, .wrapped').forEach((el) => el.classList.remove('wrapped-zoom', 'wrapped'));
+
+    if (document.body.classList.contains('dark')) {
+      initMermaid(true);
+      try {
+        for (const el of clone.querySelectorAll('.mermaid-rendered[data-mermaid]')) {
+          try {
+            const code = decodeURIComponent(el.getAttribute('data-mermaid'));
+            const { svg } = await mermaid.render('mmd-exp-' + Math.random().toString(36).slice(2, 7), code);
+            el.innerHTML = svg;
+          } catch (e) { /* keep the on-screen version */ }
+        }
+      } finally { initMermaid(); cleanupMermaidErrors(); }
+    }
+
+    for (const img of clone.querySelectorAll('img')) {
+      const abs = img.src;
+      img.setAttribute('src', abs);
+      if (inlineImages && !abs.startsWith('data:')) {
+        try {
+          const res = await fetch(abs, { credentials: 'include' });
+          if (res.ok) img.setAttribute('src', await blobToDataUrl(await res.blob()));
+        } catch (e) { /* leave the absolute URL */ }
+      }
+    }
+    return clone.innerHTML;
+  }
+
+  function buildExportDocument(title, bodyHtml) {
+    return '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      '<title>' + escapeHtml(title) + '</title><style>' + EXPORT_CSS + '</style></head><body>' +
+      '<table class="page-frame"><thead><tr><th><div class="export-meta">' + escapeHtml(exportMeta()) + '</div></th></tr></thead>' +
+      '<tfoot><tr><td><div class="page-foot"></div></td></tr></tfoot>' +
+      '<tbody><tr><td><article class="md">' + bodyHtml + '</article></td></tr></tbody></table></body></html>';
+  }
+
+  async function exportPDF() {
+    // Must open synchronously inside the click, before any await, or pop-up blockers refuse it.
     const w = window.open('', '_blank');
-    w.document.write(`<!DOCTYPE html><html><head><title>${escapeHtml(fileNameInput.value || 'Markdown')}</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;padding:40px;max-width:800px;margin:0 auto;line-height:1.7;color:#1a1d21}h1,h2{border-bottom:1px solid #e5e7eb;padding-bottom:.25em}h1{font-size:2em}h2{font-size:1.5em}h3{font-size:1.25em}code{background:#f4f5f7;padding:.15em .4em;border-radius:4px;font-family:Consolas,monospace;font-size:.9em}pre{background:#f4f5f7;padding:16px;border-radius:8px;overflow-x:auto}pre code{background:none;padding:0}blockquote{border-left:3px solid #d1d5db;padding:2px 0 2px 16px;color:#5f6672;margin:0 0 14px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #e5e7eb;padding:8px 12px;text-align:left}thead th{background:#f8f9fb}img{max-width:100%}a{color:#3b82f6}@media print{body{padding:0}}</style></head><body>${preview.innerHTML}</body></html>`);
-    w.document.close(); setTimeout(() => w.print(), 500);
+    if (!w) { showToast('Allow pop-ups to download the PDF'); return; }
+    w.document.write('<!DOCTYPE html><title>Preparing PDF</title><p style="font:14px sans-serif;color:#666;padding:24px">Preparing PDF…</p>');
+    try {
+      const body = await buildExportBody();
+      w.document.open();
+      w.document.write(buildExportDocument(exportBaseName(), body));
+      w.document.close();
+      const pending = [...w.document.images].filter((i) => !i.complete)
+        .map((i) => new Promise((r) => { i.onload = i.onerror = r; }));
+      await Promise.race([Promise.all(pending), new Promise((r) => setTimeout(r, 4000))]);
+      setTimeout(() => { w.focus(); w.print(); }, 200);
+    } catch (e) {
+      w.close();
+      showToast('Could not build the PDF');
+    }
+  }
+
+  function exportMarkdown() {
+    downloadBlob(new Blob([cm.getValue()], { type: 'text/markdown;charset=utf-8' }), exportBaseName() + '.md');
+  }
+
+  async function exportHTML() {
+    try {
+      const body = await buildExportBody({ inlineImages: true });
+      downloadBlob(new Blob([buildExportDocument(exportBaseName(), body)], { type: 'text/html;charset=utf-8' }), exportBaseName() + '.html');
+    } catch (e) {
+      showToast('Could not build the HTML file');
+    }
   }
 
   // ===== Utilities =====
@@ -1179,6 +2177,19 @@ graph TD
 
   // ===== Init =====
   async function init() {
+    // Start with the sidebar out of the way on a phone - otherwise it fills
+    // the whole screen on first load and there's nothing else visible.
+    if (window.innerWidth <= 768) closeSidebar();
+
+    // Auth check
+    try {
+      const authRes = await fetch('/api/auth/status');
+      const authData = await authRes.json();
+      if (!authData.setup_done) { location.href = '/setup.html'; return; }
+      if (!authData.logged_in && !location.pathname.match(/^\/(s|p|e)\//)) { location.href = '/login.html'; return; }
+      if (authData.user) { const el = $('#sidebar-username'); if (el) el.textContent = authData.user.username; }
+    } catch (e) {}
+
     if (await checkSharedView()) return;
 
     await loadAll();
@@ -1194,34 +2205,180 @@ graph TD
 
     setupSyncScroll();
     setupDivider();
+    setupLayoutSwitch();
     setupImageUpload();
 
-    cm.on('changes', () => { scheduleRender(); scheduleSave(); });
+    cm.on('changes', (instance, changes) => {
+      // setValue() (switchFile loading a file, cached or fresh) fires this
+      // same event. Autosaving on that would write the just-loaded content
+      // straight back to the server - clobbering anything newer there with
+      // whatever we happened to have loaded (e.g. a stale cache entry).
+      if (changes.some((c) => c.origin === 'setValue')) return;
+      scheduleRender(); scheduleSave();
+    });
     cm.on('cursorActivity', updateCursor);
 
     fileNameInput.addEventListener('input', () => {
-      if (!activeFileId) return; clearTimeout(saveTimer);
-      saveTimer = setTimeout(async () => { await api.updateFile(activeFileId, { name: fileNameInput.value }); const f = files.find(x => x.id === activeFileId); if (f) f.name = fileNameInput.value; renderSidebar(); showSaveStatus('Saved'); }, 400);
+      if (!activeFileId) return;
+      clearTimeout(saveTimer); showSaveStatus('Saving...');
+      pendingSaveFileId = activeFileId;
+      pendingName = fileNameInput.value;
+      saveTimer = setTimeout(flushPendingSave, 400);
     });
 
-    $('#btn-new-file').addEventListener('click', () => createNewFile());
+    $('#stale-reload').addEventListener('click', async (e) => {
+      await withLoading(e.currentTarget, () => switchFile(activeFileId, true));
+      showToast('Reloaded');
+    });
+    $('#stale-dismiss').addEventListener('click', hideStaleBanner);
+    startStaleCheck();
+
+    $('#btn-new-file').addEventListener('click', showNewFileMenu);
+    $('#btn-save-template').addEventListener('click', () => {
+      modalTitle.textContent = 'Save as template';
+      modalBody.innerHTML = `
+        <div style="margin-bottom:16px">
+          <label style="display:block;font-size:12px;color:var(--text-2);margin-bottom:6px">Template name</label>
+          <input type="text" id="template-name-input" class="file-name-input" style="width:100%" value="${escapeHtml(fileNameInput.value || 'Untitled')}" spellcheck="false">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn-new-folder" id="template-cancel" style="margin:0;width:auto">Cancel</button>
+          <button class="btn-new-file" id="template-save" style="margin:0;width:auto">Save</button>
+        </div>
+      `;
+      modalOverlay.classList.add('show');
+      const input = $('#template-name-input');
+      input.focus(); input.select();
+      $('#template-cancel').addEventListener('click', () => modalOverlay.classList.remove('show'));
+      $('#template-save').addEventListener('click', async (e) => {
+        await withLoading(e.currentTarget, () => api.createTemplate(input.value.trim() || 'Untitled', cm.getValue()));
+        modalOverlay.classList.remove('show');
+        showToast('Saved as template');
+      });
+    });
     $('#btn-new-folder').addEventListener('click', createNewFolder);
-    $('#btn-toggle-sidebar').addEventListener('click', () => { sidebar.classList.add('collapsed'); $('#btn-open-sidebar').style.display = 'flex'; });
-    $('#btn-open-sidebar').addEventListener('click', () => { sidebar.classList.remove('collapsed'); $('#btn-open-sidebar').style.display = 'none'; });
+    $('#btn-toggle-sidebar').addEventListener('click', expandOrCloseSidebar);
+
+    const resizer = $('#sidebar-resizer');
+    let resizeFrame = 0;
+    resizer.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      resizer.setPointerCapture(e.pointerId);
+      document.body.classList.add('sidebar-resizing');
+      const move = (ev) => {
+        const w = Math.max(SIDEBAR_MIN_W, Math.min(ev.clientX - sidebar.getBoundingClientRect().left, sidebarMaxW()));
+        document.documentElement.style.setProperty('--sidebar-w', Math.round(w) + 'px');
+        if (!resizeFrame) resizeFrame = requestAnimationFrame(() => { resizeFrame = 0; cm.refresh(); });
+      };
+      const up = () => {
+        resizer.removeEventListener('pointermove', move);
+        resizer.removeEventListener('pointerup', up);
+        resizer.removeEventListener('pointercancel', up);
+        document.body.classList.remove('sidebar-resizing');
+        localStorage.setItem('md-sidebar-w', String(Math.round(sidebar.getBoundingClientRect().width)));
+        cm.refresh();
+      };
+      resizer.addEventListener('pointermove', move);
+      resizer.addEventListener('pointerup', up);
+      resizer.addEventListener('pointercancel', up);
+    });
+    resizer.addEventListener('dblclick', () => {
+      localStorage.removeItem('md-sidebar-w');
+      applyStoredSidebarWidth();
+      cm.refresh();
+    });
+    $('#btn-open-sidebar').addEventListener('click', openSidebar);
+    $('#sidebar-backdrop').addEventListener('click', closeSidebar);
+    const settingsWrap = $('#settings-menu-wrap');
+    $('#btn-settings').addEventListener('click', (e) => { e.stopPropagation(); settingsWrap.classList.toggle('open'); });
+    $('#settings-menu').addEventListener('click', () => settingsWrap.classList.remove('open'));
+    document.addEventListener('click', (e) => { if (!settingsWrap.contains(e.target)) settingsWrap.classList.remove('open'); });
+    $('#btn-apikeys').addEventListener('click', openApiKeysManager);
+    $('#btn-backup').addEventListener('click', () => { window.location.href = '/api/backup'; });
+    $('#btn-about').addEventListener('click', () => {
+      modalTitle.textContent = 'About';
+      modalBody.innerHTML = `
+        <div style="text-align:center;padding:8px 0">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" style="margin-bottom:8px"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          <h3 style="font-size:16px;font-weight:700;margin-bottom:2px">Markdown Preview Studio</h3>
+          <p style="color:var(--text-3);font-size:12px;margin-bottom:12px">Community Edition</p>
+          <p style="font-size:20px;font-weight:600;color:var(--accent);margin-bottom:16px">v1.0.0</p>
+          <div style="font-size:12px;color:var(--text-2);line-height:1.8;text-align:left;border-top:1px solid var(--border);padding-top:12px">
+            <p>Self-hosted Markdown editor with live preview, PostgreSQL storage, folder management, and sharing.</p>
+            <p style="margin-top:8px"><a href="/docs.html" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">API documentation</a> - for integrating with third-party tools</p>
+            <p style="margin-top:8px">MIT License &copy; 2026 <a href="https://github.com/c2at3" target="_blank" rel="noopener noreferrer" style="color:var(--accent)">c2at3</a></p>
+          </div>
+        </div>
+      `;
+      modalOverlay.classList.add('show');
+    });
+
+    $('#btn-logout').addEventListener('click', () => {
+      modalTitle.textContent = 'Logout';
+      modalBody.innerHTML = '<p style="color:var(--text-2);font-size:14px;margin-bottom:16px">Are you sure you want to log out?</p><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn-new-folder" id="logout-cancel" style="margin:0;width:auto">Cancel</button><button class="btn-new-file" id="logout-confirm" style="margin:0;width:auto;background:var(--danger)">Logout</button></div>';
+      modalOverlay.classList.add('show');
+      $('#logout-cancel').addEventListener('click', () => modalOverlay.classList.remove('show'));
+      $('#logout-confirm').addEventListener('click', async () => {
+        await fetch('/api/auth/logout', { method: 'POST' });
+        document.cookie = 'session=;path=/;max-age=0';
+        location.href = '/login.html';
+      });
+    });
 
     $('#btn-bold').addEventListener('click', () => insertAround('**', '**'));
     $('#btn-italic').addEventListener('click', () => insertAround('*', '*'));
     $('#btn-heading').addEventListener('click', () => insertAtLine('## '));
     $('#btn-link').addEventListener('click', () => insertAround('[', '](url)'));
     $('#btn-code').addEventListener('click', () => insertAround('```\n', '\n```'));
-    $('#btn-table').addEventListener('click', () => insertText('\n| Column 1 | Column 2 |\n| -------- | -------- |\n| Cell 1   | Cell 2   |\n'));
+    $('#btn-table').addEventListener('click', () => {
+      modalTitle.textContent = 'Insert table';
+      modalBody.innerHTML = `
+        <div style="display:flex;gap:12px;margin-bottom:16px">
+          <div style="flex:1">
+            <label style="display:block;font-size:12px;color:var(--text-2);margin-bottom:6px">Columns</label>
+            <input type="number" id="table-cols-input" class="file-name-input" style="width:100%" min="1" max="20" value="2">
+          </div>
+          <div style="flex:1">
+            <label style="display:block;font-size:12px;color:var(--text-2);margin-bottom:6px">Rows</label>
+            <input type="number" id="table-rows-input" class="file-name-input" style="width:100%" min="1" max="50" value="1">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn-new-folder" id="table-cancel" style="margin:0;width:auto">Cancel</button>
+          <button class="btn-new-file" id="table-insert" style="margin:0;width:auto">Insert</button>
+        </div>
+      `;
+      modalOverlay.classList.add('show');
+      const colsInput = $('#table-cols-input'), rowsInput = $('#table-rows-input');
+      colsInput.focus(); colsInput.select();
+      const doInsert = () => {
+        insertText(buildMarkdownTable(parseInt(colsInput.value, 10), parseInt(rowsInput.value, 10)));
+        modalOverlay.classList.remove('show');
+      };
+      $('#table-cancel').addEventListener('click', () => modalOverlay.classList.remove('show'));
+      $('#table-insert').addEventListener('click', doInsert);
+      [colsInput, rowsInput].forEach(inp => inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') doInsert(); }));
+    });
 
     $('#btn-copy-md').addEventListener('click', () => navigator.clipboard.writeText(cm.getValue()).then(() => showToast('Markdown copied')));
     $('#btn-copy-html').addEventListener('click', () => navigator.clipboard.writeText(preview.innerHTML).then(() => showToast('HTML copied')));
     $('#btn-find').addEventListener('click', () => toggleFindPanel());
-    $('#btn-share').addEventListener('click', shareCurrentFile);
-    $('#btn-export').addEventListener('click', exportPDF);
-    $('#toggle-dark').addEventListener('change', () => applyDark($('#toggle-dark').checked));
+    $('#btn-share').addEventListener('click', () => shareCurrentFile());
+    // Same tap-open pattern as the layout dropdown (hover alone doesn't exist on touch).
+    const downloadControl = $('#download-control');
+    $('#btn-export').addEventListener('click', (e) => { e.stopPropagation(); downloadControl.classList.toggle('open'); });
+    document.addEventListener('click', (e) => { if (!downloadControl.contains(e.target)) downloadControl.classList.remove('open'); });
+    [['#dl-pdf', exportPDF], ['#dl-md', exportMarkdown], ['#dl-html', exportHTML]].forEach(([sel, fn]) => {
+      $(sel).addEventListener('click', (e) => { e.currentTarget.blur(); downloadControl.classList.remove('open'); fn(); });
+    });
+    $('#mt-dark-toggle').addEventListener('click', () => applyDark(!document.body.classList.contains('dark')));
+
+    // Mobile tools drawer (find/dark/share/PDF/sync/layout) - tap the "more
+    // tools" button to open, tap anywhere outside to close. Same pattern as
+    // the layout and text-settings dropdowns (no hover on touch).
+    const mobileToolsControl = $('#mobile-tools-control');
+    $('#btn-mobile-tools').addEventListener('click', (e) => { e.stopPropagation(); mobileToolsControl.classList.toggle('open'); });
+    document.addEventListener('click', (e) => { if (!mobileToolsControl.contains(e.target)) mobileToolsControl.classList.remove('open'); });
 
     $('#modal-close').addEventListener('click', () => modalOverlay.classList.remove('show'));
     modalOverlay.addEventListener('click', (e) => { if (e.target === modalOverlay) modalOverlay.classList.remove('show'); });

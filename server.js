@@ -1,409 +1,890 @@
 const express = require('express');
-const initSqlJs = require('sql.js');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const multer = require('multer');
+const archiver = require('archiver');
 const { nanoid } = require('nanoid');
-
-function hashPassword(pw) { return crypto.createHash('sha256').update(pw).digest('hex'); }
+const db = require('./lib/db');
+const auth = require('./lib/auth');
+const { createMcpHandler } = require('./lib/mcp');
+const { authRateLimiter } = require('./lib/ratelimit');
 
 const app = express();
 const PORT = process.env.PORT || 3456;
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'markdown.db');
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'data', 'uploads');
 
-fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-let db;
+// Kept in memory, not written to disk - its bytes become a file's `content`
+// (as UTF-8 text) in the upload route below, same 10mb ceiling as a plain
+// JSON body so a multipart upload can't bypass that limit.
+const uploadFile = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-function query(sql, params = []) {
-  const stmt = db.prepare(sql);
-  stmt.bind(params);
-  const rows = [];
-  while (stmt.step()) rows.push(stmt.getAsObject());
-  stmt.free();
-  return rows;
+function hashSharePw(pw) { return crypto.createHash('sha256').update(pw).digest('hex'); }
+
+function log(msg) { console.log(`[${new Date().toISOString()}] ${msg}`); }
+
+// Cloudflare caches .js/.css by extension regardless of the Cache-Control
+// header this app sends (confirmed: origin sends "no-cache", but the edge
+// serves "max-age=14400" anyway) - a deploy's new app.js/style.css could sit
+// behind that edge cache for hours. Stamping a version query string onto
+// the <script>/<link> tags sidesteps it: each deploy gets its own URL, which
+// the CDN/browser has never cached, instead of relying on cache headers it
+// doesn't respect for these two files.
+const ASSET_VERSION = crypto.createHash('md5')
+  .update(fs.readFileSync(path.join(__dirname, 'public', 'app.js')))
+  .update(fs.readFileSync(path.join(__dirname, 'public', 'style.css')))
+  .digest('hex').slice(0, 10);
+
+function renderVersionedHtml(filePath) {
+  return fs.readFileSync(filePath, 'utf8')
+    .replace('/style.css"', `/style.css?v=${ASSET_VERSION}"`)
+    .replace('/app.js"', `/app.js?v=${ASSET_VERSION}"`);
 }
 
-function run(sql, params = []) {
-  db.run(sql, params);
-  return { changes: db.getRowsModified() };
-}
-
-function get(sql, params = []) {
-  const rows = query(sql, params);
-  return rows[0] || null;
-}
-
-function saveDb() {
-  const data = db.export();
-  fs.writeFileSync(DB_PATH, Buffer.from(data));
-}
-
-let saveTimer = null;
-function scheduleSave() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveDb, 300);
-}
-
-async function initDb() {
-  const SQL = await initSqlJs();
-  if (fs.existsSync(DB_PATH)) {
-    const buf = fs.readFileSync(DB_PATH);
-    db = new SQL.Database(buf);
-  } else {
-    db = new SQL.Database();
-  }
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS folders (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL DEFAULT 'New Folder',
-      parent_id TEXT,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      collapsed INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS files (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL DEFAULT 'Untitled',
-      content TEXT NOT NULL DEFAULT '',
-      folder_id TEXT,
-      share_id TEXT UNIQUE,
-      is_pinned INTEGER NOT NULL DEFAULT 0,
-      sort_order INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
-
-  // Migrations
-  try { db.run('ALTER TABLE files ADD COLUMN folder_id TEXT'); } catch (e) {}
-  try { db.run('ALTER TABLE files ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0'); } catch (e) {}
-  try { db.run('ALTER TABLE files ADD COLUMN private_view_token TEXT'); } catch (e) {}
-  try { db.run('ALTER TABLE files ADD COLUMN private_edit_token TEXT'); } catch (e) {}
-  try { db.run('ALTER TABLE files ADD COLUMN private_view_pw TEXT'); } catch (e) {}
-  try { db.run('ALTER TABLE files ADD COLUMN private_edit_pw TEXT'); } catch (e) {}
-  try { db.run('ALTER TABLE folders ADD COLUMN color TEXT'); } catch (e) {}
-
-  db.run('CREATE INDEX IF NOT EXISTS idx_files_share_id ON files(share_id)');
-  db.run('CREATE INDEX IF NOT EXISTS idx_files_folder ON files(folder_id)');
-  db.run('CREATE INDEX IF NOT EXISTS idx_files_pvt_view ON files(private_view_token)');
-  db.run('CREATE INDEX IF NOT EXISTS idx_files_pvt_edit ON files(private_edit_token)');
-  saveDb();
-}
+// Cookie parser
+app.use((req, res, next) => {
+  req.cookies = {};
+  (req.headers.cookie || '').split(';').forEach(c => {
+    const [k, v] = c.trim().split('=');
+    if (k && v) req.cookies[k] = v;
+  });
+  next();
+});
 
 app.use(express.json({ limit: '10mb' }));
+app.set('trust proxy', true);
+
+// ===== HEALTH =====
+app.get('/health', async (req, res) => {
+  try {
+    await db.get('SELECT 1');
+    res.json({ status: 'ok', uptime: process.uptime() });
+  } catch (e) {
+    res.status(503).json({ status: 'error', error: e.message });
+  }
+});
+
+// ===== AUTH ROUTES (public) =====
+app.get('/api/auth/status', async (req, res) => {
+  const hasUsers = await auth.hasAnyUser();
+  const token = req.cookies.session || req.headers['x-session-token'];
+  const user = await auth.validateSession(token);
+  res.json({ setup_done: hasUsers, logged_in: !!user, user: user ? { username: user.username, role: user.role } : null });
+});
+
+app.post('/api/auth/setup', authRateLimiter, async (req, res) => {
+  const hasUsers = await auth.hasAnyUser();
+  if (hasUsers) return res.status(400).json({ error: 'Setup already completed' });
+  const { username, password } = req.body;
+  if (!username || username.length < 3) return res.status(400).json({ error: 'Username min 3 chars' });
+  if (!password || password.length < 6) return res.status(400).json({ error: 'Password min 6 chars' });
+  try {
+    await auth.createUser(username, password, 'admin');
+    const session = await auth.login(username, password);
+    log(`Setup completed. Admin user "${username}" created.`);
+    res.json({ ok: true, token: session.token });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/auth/login', authRateLimiter, async (req, res) => {
+  const { username, password } = req.body;
+  const session = await auth.login(username, password);
+  if (!session) { log(`Login failed for "${username}" from ${req.ip}`); return res.status(401).json({ error: 'Invalid credentials' }); }
+  log(`Login: "${username}" from ${req.ip}`);
+  res.json({ token: session.token, user: session.user });
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  const token = req.cookies.session || req.headers['x-session-token'];
+  if (token) await auth.logout(token);
+  res.json({ ok: true });
+});
+
+// ===== STATIC =====
 app.use('/uploads', (req, res, next) => {
-  res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; style-src 'none'; script-src 'none'");
+  res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'");
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Content-Disposition', 'inline');
   res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
   next();
 }, express.static(UPLOAD_DIR));
-app.use(express.static(path.join(__dirname, 'public')));
+
+// Auth redirects (before static so they intercept HTML pages)
+app.get('/', async (req, res, next) => {
+  const hasUsers = await auth.hasAnyUser();
+  if (!hasUsers) return res.redirect('/setup.html');
+  const user = await auth.validateSession(req.cookies.session);
+  if (!user) return res.redirect('/login.html');
+  res.type('html').send(renderVersionedHtml(path.join(__dirname, 'public', 'index.html')));
+});
+
+app.get('/docs.html', (req, res) => {
+  res.type('html').send(renderVersionedHtml(path.join(__dirname, 'public', 'docs.html')));
+});
+
+app.get('/login.html', async (req, res, next) => {
+  const hasUsers = await auth.hasAnyUser();
+  if (!hasUsers) return res.redirect('/setup.html');
+  const user = await auth.validateSession(req.cookies.session);
+  if (user) return res.redirect('/');
+  next();
+});
+
+app.get('/setup.html', async (req, res, next) => {
+  const hasUsers = await auth.hasAnyUser();
+  if (hasUsers) return res.redirect('/');
+  next();
+});
+
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache')
+}));
+
+// ===== MCP (Model Context Protocol) =====
+// API-key auth is handled inside the handler; the tools call the /api routes
+// below with that same key, so they can never exceed what the key may do.
+app.post('/mcp', createMcpHandler({ port: PORT, version: require('./package.json').version, validateApiKey: auth.validateApiKey }));
+app.all('/mcp', (req, res) => res.status(405).set('Allow', 'POST').json({ error: 'This MCP endpoint only supports POST (Streamable HTTP with JSON responses)' }));
+
+// ===== AUTH MIDDLEWARE =====
+app.use('/api', async (req, res, next) => {
+  const publicPrefixes = ['/auth/', '/shared/', '/private/', '/private-edit/'];
+  const apiPath = req.path;
+  if (publicPrefixes.some(p => apiPath.startsWith(p))) return next();
+
+  const authHeader = req.headers['authorization'] || '';
+  const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (bearerMatch) {
+    const key = await auth.validateApiKey(bearerMatch[1].trim());
+    if (!key) return res.status(401).json({ error: 'Invalid API key' });
+    // API keys (third-party integrations) may only call these three
+    // endpoints. Everything else - folders, templates, sharing, apikeys -
+    // stays reachable only via a logged-in session (the app's own web UI).
+    const isAllowedCall =
+      (apiPath === '/files/upload' && (req.method === 'POST' || req.method === 'DELETE')) ||
+      (apiPath === '/images/upload' && req.method === 'POST') ||
+      (apiPath === '/files/list' && req.method === 'GET') ||
+      (apiPath === '/files/view' && req.method === 'GET');
+    if (!isAllowedCall) {
+      return res.status(403).json({ error: 'This API key can only be used with POST/DELETE /api/files/upload, POST /api/images/upload, GET /api/files/list, or GET /api/files/view' });
+    }
+    req.user = { id: 'api:' + key.id, username: key.name, role: 'admin' };
+    req.apiKey = key;
+    return next();
+  }
+
+  const token = req.cookies.session || req.headers['x-session-token'];
+  const user = await auth.validateSession(token);
+  if (!user) return res.status(401).json({ error: 'Not authenticated' });
+  req.user = user;
+  next();
+});
+
+// ===== API KEYS (session auth only, see middleware above) =====
+app.get('/api/apikeys', async (req, res) => {
+  res.json(await auth.listApiKeys());
+});
+
+app.post('/api/apikeys', async (req, res) => {
+  const { name } = req.body;
+  res.status(201).json(await auth.createApiKey(name));
+});
+
+app.delete('/api/apikeys/:id', async (req, res) => {
+  const ok = await auth.revokeApiKey(req.params.id);
+  if (!ok) return res.status(404).json({ error: 'Not found' });
+  res.json({ ok: true });
+});
 
 // ===== FOLDERS =====
-app.get('/api/folders', (req, res) => {
-  res.json(query('SELECT * FROM folders ORDER BY sort_order'));
+app.get('/api/folders', async (req, res) => {
+  res.json(await db.query('SELECT * FROM folders ORDER BY sort_order'));
 });
 
-app.post('/api/folders', (req, res) => {
+app.post('/api/folders', async (req, res) => {
   const id = nanoid(10);
   const { name, parent_id } = req.body;
-  const maxOrder = get('SELECT MAX(sort_order) as m FROM folders WHERE parent_id IS ?', [parent_id || null]);
-  const order = (maxOrder?.m || 0) + 1;
-  run('INSERT INTO folders (id, name, parent_id, sort_order) VALUES (?, ?, ?, ?)',
-    [id, name || 'New Folder', parent_id || null, order]);
-  scheduleSave();
-  res.status(201).json(get('SELECT * FROM folders WHERE id = ?', [id]));
+  const pid = parent_id || null;
+  const maxOrder = pid
+    ? await db.get('SELECT MAX(sort_order) as m FROM folders WHERE parent_id = ?', [pid])
+    : await db.get('SELECT MAX(sort_order) as m FROM folders WHERE parent_id IS NULL');
+  await db.run('INSERT INTO folders (id, name, parent_id, sort_order) VALUES (?, ?, ?, ?)',
+    [id, name || 'New Folder', pid, (maxOrder?.m || 0) + 1]);
+  res.status(201).json(await db.get('SELECT * FROM folders WHERE id = ?', [id]));
 });
 
-app.put('/api/folders/:id', (req, res) => {
+app.put('/api/folders/:id', async (req, res) => {
   const { name, parent_id, collapsed, sort_order, color } = req.body;
   const sets = [], vals = [];
   if (name !== undefined) { sets.push('name = ?'); vals.push(name); }
   if (parent_id !== undefined) { sets.push('parent_id = ?'); vals.push(parent_id || null); }
-  if (collapsed !== undefined) { sets.push('collapsed = ?'); vals.push(collapsed ? 1 : 0); }
+  if (collapsed !== undefined) { sets.push('collapsed = ?'); vals.push(!!collapsed); }
   if (sort_order !== undefined) { sets.push('sort_order = ?'); vals.push(sort_order); }
   if (color !== undefined) { sets.push('color = ?'); vals.push(color || null); }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
   vals.push(req.params.id);
-  run(`UPDATE folders SET ${sets.join(', ')} WHERE id = ?`, vals);
-  scheduleSave();
-  res.json(get('SELECT * FROM folders WHERE id = ?', [req.params.id]));
+  await db.run(`UPDATE folders SET ${sets.join(', ')} WHERE id = ?`, vals);
+  res.json(await db.get('SELECT * FROM folders WHERE id = ?', [req.params.id]));
 });
 
-app.delete('/api/folders/:id', (req, res) => {
-  run('UPDATE files SET folder_id = NULL WHERE folder_id = ?', [req.params.id]);
-  const children = query('SELECT id FROM folders WHERE parent_id = ?', [req.params.id]);
-  children.forEach(c => {
-    run('UPDATE files SET folder_id = NULL WHERE folder_id = ?', [c.id]);
-    run('DELETE FROM folders WHERE id = ?', [c.id]);
-  });
-  run('DELETE FROM folders WHERE id = ?', [req.params.id]);
-  scheduleSave();
+app.delete('/api/folders/:id', async (req, res) => {
+  await deleteFolderCascade(req.params.id);
+  res.json({ ok: true });
+});
+
+// ===== TEMPLATES =====
+app.get('/api/templates', async (req, res) => {
+  res.json(await db.query('SELECT * FROM templates ORDER BY sort_order, created_at'));
+});
+
+app.post('/api/templates', async (req, res) => {
+  const id = nanoid(10);
+  const { name, content } = req.body;
+  const maxOrder = await db.get('SELECT MAX(sort_order) as m FROM templates');
+  await db.run('INSERT INTO templates (id, name, content, sort_order) VALUES (?, ?, ?, ?)',
+    [id, name || 'Untitled', content || '', (maxOrder?.m || 0) + 1]);
+  res.status(201).json(await db.get('SELECT * FROM templates WHERE id = ?', [id]));
+});
+
+app.put('/api/templates/:id', async (req, res) => {
+  const { name, content, sort_order } = req.body;
+  const sets = [], vals = [];
+  if (name !== undefined) { sets.push('name = ?'); vals.push(name); }
+  if (content !== undefined) { sets.push('content = ?'); vals.push(content); }
+  if (sort_order !== undefined) { sets.push('sort_order = ?'); vals.push(sort_order); }
+  if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
+  vals.push(req.params.id);
+  const result = await db.run(`UPDATE templates SET ${sets.join(', ')} WHERE id = ?`, vals);
+  if (!result.changes) return res.status(404).json({ error: 'Not found' });
+  res.json(await db.get('SELECT * FROM templates WHERE id = ?', [req.params.id]));
+});
+
+app.delete('/api/templates/:id', async (req, res) => {
+  const result = await db.run('DELETE FROM templates WHERE id = ?', [req.params.id]);
+  if (!result.changes) return res.status(404).json({ error: 'Not found' });
   res.json({ ok: true });
 });
 
 // ===== FILES =====
-app.get('/api/files', (req, res) => {
-  const files = query('SELECT id, name, folder_id, is_pinned, sort_order, created_at, updated_at FROM files ORDER BY is_pinned DESC, sort_order, updated_at DESC');
-  res.json(files);
+app.get('/api/files', async (req, res) => {
+  res.json(await db.query(`
+    SELECT id, name, folder_id, is_pinned, sort_order, icon, icon_color, created_at, updated_at,
+      (share_id IS NOT NULL OR private_view_token IS NOT NULL OR private_edit_token IS NOT NULL) AS is_shared
+    FROM files ORDER BY is_pinned DESC, sort_order, updated_at DESC
+  `));
 });
 
-app.post('/api/files', (req, res) => {
+app.post('/api/files', async (req, res) => {
   const id = nanoid(12);
   const { name, content, folder_id } = req.body;
-  const maxOrder = get('SELECT MAX(sort_order) as m FROM files WHERE folder_id IS ?', [folder_id || null]);
-  const order = (maxOrder?.m || 0) + 1;
-  run('INSERT INTO files (id, name, content, folder_id, sort_order) VALUES (?, ?, ?, ?, ?)',
-    [id, name || 'Untitled', content || '', folder_id || null, order]);
-  scheduleSave();
-  res.status(201).json(get('SELECT * FROM files WHERE id = ?', [id]));
+  const fid = folder_id || null;
+  const maxOrder = fid
+    ? await db.get('SELECT MAX(sort_order) as m FROM files WHERE folder_id = ?', [fid])
+    : await db.get('SELECT MAX(sort_order) as m FROM files WHERE folder_id IS NULL');
+  await db.run('INSERT INTO files (id, name, content, folder_id, sort_order) VALUES (?, ?, ?, ?, ?)',
+    [id, name || 'Untitled', content || '', fid, (maxOrder?.m || 0) + 1]);
+  res.status(201).json(await db.get('SELECT * FROM files WHERE id = ?', [id]));
 });
 
-app.get('/api/files/:id', (req, res) => {
-  const file = get('SELECT * FROM files WHERE id = ?', [req.params.id]);
+// Resolves a "Parent/Child/Grandchild" path to a folder id, creating segments
+// that don't exist yet (unless autoCreate is false, in which case it throws).
+async function resolveFolderPath(pathStr, autoCreate, defaultColor) {
+  const segments = (pathStr || '').split('/').map(s => s.trim()).filter(Boolean);
+  let parentId = null;
+  const createdIds = [];
+  for (const seg of segments) {
+    const existing = parentId
+      ? await db.get('SELECT id FROM folders WHERE name = ? AND parent_id = ?', [seg, parentId])
+      : await db.get('SELECT id FROM folders WHERE name = ? AND parent_id IS NULL', [seg]);
+    if (existing) { parentId = existing.id; continue; }
+    if (!autoCreate) {
+      const err = new Error(`Folder path not found: "${segments.join('/')}" (missing "${seg}")`);
+      err.status = 404;
+      throw err;
+    }
+    const id = nanoid(10);
+    const maxOrder = parentId
+      ? await db.get('SELECT MAX(sort_order) as m FROM folders WHERE parent_id = ?', [parentId])
+      : await db.get('SELECT MAX(sort_order) as m FROM folders WHERE parent_id IS NULL');
+    await db.run('INSERT INTO folders (id, name, parent_id, sort_order, color) VALUES (?, ?, ?, ?, ?)',
+      [id, seg, parentId, (maxOrder?.m || 0) + 1, defaultColor || null]);
+    parentId = id;
+    createdIds.push(id);
+  }
+  return { folder_id: parentId, created_folder_ids: createdIds };
+}
+
+async function findFileInFolder(fname, folderId) {
+  return folderId
+    ? db.get('SELECT id FROM files WHERE name = ? AND folder_id = ?', [fname, folderId])
+    : db.get('SELECT id FROM files WHERE name = ? AND folder_id IS NULL', [fname]);
+}
+
+// Deletes a folder and its entire subtree (any depth), moving every file
+// anywhere in it to root rather than deleting them - matches the confirm
+// dialog's plain "Delete folder?" wording, which warns about the folder,
+// not its contents. Previously this only walked one level of children, so
+// a folder nested two or more levels deep never got collected/deleted and
+// files inside it were never re-parented.
+async function deleteFolderCascade(id) {
+  const subtreeIds = [id];
+  for (let i = 0; i < subtreeIds.length; i++) {
+    const children = await db.query('SELECT id FROM folders WHERE parent_id = ?', [subtreeIds[i]]);
+    for (const c of children) subtreeIds.push(c.id);
+  }
+  for (const fid of subtreeIds) {
+    await db.run('UPDATE files SET folder_id = NULL WHERE folder_id = ?', [fid]);
+  }
+  for (let i = subtreeIds.length - 1; i >= 0; i--) {
+    await db.run('DELETE FROM folders WHERE id = ?', [subtreeIds[i]]);
+  }
+}
+
+const COLOR_NAMES = {
+  red: '#ef4444', orange: '#f97316', yellow: '#eab308', green: '#22c55e',
+  blue: '#3b82f6', purple: '#a855f7', pink: '#ec4899', teal: '#14b8a6', gray: '#6b7280'
+};
+const VALID_ICONS = ['default', 'note', 'bug', 'vulnerability', 'lock', 'warning', 'work', 'checklist', 'idea', 'book', 'chart', 'star', 'flag', 'rocket', 'calendar', 'code'];
+
+// Colors and icons are a closed set, not free-form input - resolves a color
+// *name* (e.g. "red") to its hex value, or an icon key to itself, throwing a
+// 400 if the caller passed something outside the set. Returns undefined
+// unchanged so "field omitted" and "field invalid" stay distinguishable.
+function resolveColorName(value, field) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const hex = COLOR_NAMES[String(value).toLowerCase()];
+  if (!hex) {
+    const err = new Error(`Invalid ${field}: "${value}". Must be one of: ${Object.keys(COLOR_NAMES).join(', ')}`);
+    err.status = 400;
+    throw err;
+  }
+  return hex;
+}
+
+function resolveIconKey(value) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (!VALID_ICONS.includes(String(value).toLowerCase())) {
+    const err = new Error(`Invalid icon: "${value}". Must be one of: ${VALID_ICONS.join(', ')}`);
+    err.status = 400;
+    throw err;
+  }
+  return String(value).toLowerCase();
+}
+
+// The single endpoint API keys are allowed to call (see the /api auth
+// middleware below). Addresses a file by a human-readable "folder path +
+// filename" instead of ids - POST creates it, or overwrites it in place
+// (same id, no duplicate) if one already exists there; DELETE removes the
+// file (with filename) or the folder itself (without filename).
+app.post('/api/files/upload', uploadFile.single('file'), async (req, res) => {
+  const { folder, auto_create } = req.body;
+  // Either a JSON/form "content" string, or an actual uploaded file whose
+  // bytes become the content (as text) - a file takes priority if somehow
+  // both are sent. Same for the name: an uploaded file's own filename is
+  // used when "filename"/"name" isn't given explicitly.
+  const content = req.file ? req.file.buffer.toString('utf8') : req.body.content;
+  const fname = req.body.filename || req.body.name || req.file?.originalname;
+  if (!fname) return res.status(400).json({ error: 'filename is required (or upload a file with a name)' });
+
+  let icon, iconColor, resolved;
+  try {
+    icon = resolveIconKey(req.body.icon);
+    iconColor = resolveColorName(req.body.color_file !== undefined ? req.body.color_file : req.body.icon_color, 'color_file');
+    const folderColor = resolveColorName(req.body.color_folder, 'color_folder');
+    // multipart form fields arrive as strings, so "false" must count too
+    resolved = await resolveFolderPath(folder, auto_create !== false && auto_create !== 'false', folderColor);
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    throw e;
+  }
+  const fid = resolved.folder_id;
+
+  const existing = await findFileInFolder(fname, fid);
+  if (existing) {
+    const sets = ['updated_at = NOW()'], vals = [];
+    if (content !== undefined) { sets.push('content = ?'); vals.push(content); }
+    if (icon !== undefined) { sets.push('icon = ?'); vals.push(icon); }
+    if (iconColor !== undefined) { sets.push('icon_color = ?'); vals.push(iconColor); }
+    vals.push(existing.id);
+    await db.run(`UPDATE files SET ${sets.join(', ')} WHERE id = ?`, vals);
+    const file = await db.get('SELECT * FROM files WHERE id = ?', [existing.id]);
+    return res.json({ ...file, action: 'updated', created_folder_ids: resolved.created_folder_ids });
+  }
+
+  const id = nanoid(12);
+  const maxOrder = fid
+    ? await db.get('SELECT MAX(sort_order) as m FROM files WHERE folder_id = ?', [fid])
+    : await db.get('SELECT MAX(sort_order) as m FROM files WHERE folder_id IS NULL');
+  await db.run(
+    'INSERT INTO files (id, name, content, folder_id, sort_order, icon, icon_color) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, fname, content || '', fid, (maxOrder?.m || 0) + 1, icon || null, iconColor || null]
+  );
+  const file = await db.get('SELECT * FROM files WHERE id = ?', [id]);
+  res.status(201).json({ ...file, action: 'created', created_folder_ids: resolved.created_folder_ids });
+});
+
+app.delete('/api/files/upload', async (req, res) => {
+  const { folder, filename, name } = req.body;
+  const fname = filename || name;
+
+  let resolved;
+  try {
+    resolved = await resolveFolderPath(folder, false);
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    throw e;
+  }
+  const fid = resolved.folder_id;
+
+  if (!fname) {
+    if (!fid) return res.status(400).json({ error: 'Nothing to delete: no folder path given' });
+    await deleteFolderCascade(fid);
+    return res.json({ ok: true, deleted: 'folder', folder_id: fid });
+  }
+  const existing = await findFileInFolder(fname, fid);
+  if (!existing) return res.status(404).json({ error: 'File not found' });
+  await db.run('DELETE FROM files WHERE id = ?', [existing.id]);
+  res.json({ ok: true, deleted: 'file', id: existing.id });
+});
+
+// Fetches all folders and builds an id -> full "Parent/Child" path map - the
+// mirror image of resolveFolderPath (path -> id) - so list/view can describe
+// where a file lives in the same human-readable form upload accepts.
+async function buildFolderPathMap() {
+  const folders = await db.query('SELECT id, name, parent_id FROM folders');
+  const byId = new Map(folders.map(f => [f.id, f]));
+  const cache = new Map();
+  function pathOf(id) {
+    if (!id) return null;
+    if (cache.has(id)) return cache.get(id);
+    const f = byId.get(id);
+    if (!f) return null;
+    const parentPath = pathOf(f.parent_id);
+    const full = parentPath ? parentPath + '/' + f.name : f.name;
+    cache.set(id, full);
+    return full;
+  }
+  return { folders, pathOf };
+}
+
+// Lists everything currently stored - every folder (with its full path) and
+// every file (with the folder path it lives in, but not its content) - so a
+// third-party integration can see what already exists before deciding what
+// to create or update via POST /api/files/upload.
+app.get('/api/files/list', async (req, res) => {
+  const { folders, pathOf } = await buildFolderPathMap();
+  const files = await db.query('SELECT id, name, folder_id, icon, icon_color, share_id, created_at, updated_at FROM files ORDER BY name');
+  res.json({
+    folders: folders.map(f => ({ id: f.id, name: f.name, path: pathOf(f.id) })),
+    files: files.map(f => ({
+      id: f.id,
+      name: f.name,
+      folder: pathOf(f.folder_id),
+      icon: f.icon,
+      icon_color: f.icon_color,
+      is_shared: !!f.share_id,
+      created_at: f.created_at,
+      updated_at: f.updated_at
+    }))
+  });
+});
+
+// Reads one file's content, addressed the same way as upload: a
+// human-readable folder path + filename instead of an internal id.
+app.get('/api/files/view', async (req, res) => {
+  const { folder, filename, name } = req.query;
+  const fname = filename || name;
+  if (!fname) return res.status(400).json({ error: 'filename is required' });
+
+  let resolved;
+  try {
+    resolved = await resolveFolderPath(folder, false);
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    throw e;
+  }
+  const existing = await findFileInFolder(fname, resolved.folder_id);
+  if (!existing) return res.status(404).json({ error: 'File not found' });
+
+  const file = await db.get('SELECT id, name, content, folder_id, icon, icon_color, share_id, created_at, updated_at FROM files WHERE id = ?', [existing.id]);
+  const { pathOf } = await buildFolderPathMap();
+  res.json({
+    id: file.id,
+    name: file.name,
+    folder: pathOf(file.folder_id),
+    content: file.content,
+    icon: file.icon,
+    icon_color: file.icon_color,
+    is_shared: !!file.share_id,
+    created_at: file.created_at,
+    updated_at: file.updated_at
+  });
+});
+
+// Browser-download helpers (session UI only, not part of the API-key
+// surface) - a Content-Disposition header with both a plain-ASCII
+// "filename" fallback and a UTF-8 "filename*" (RFC 5987) so names with
+// Vietnamese/accented characters still download correctly everywhere.
+function contentDisposition(filename) {
+  const ascii = filename.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, "'");
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
+
+function mdFilename(name) {
+  return /\.[a-z0-9]+$/i.test(name) ? name : name + '.md';
+}
+
+// Walks the folder tree starting at rootFolderId (or the whole tree, from
+// root files and top-level folders down, when null) and returns every file
+// under it as { id, name, relPath } - relPath is the name prefixed by each
+// folder it's nested in, relative to rootFolderId, e.g. "Sub/notes.md".
+async function collectFilesUnder(rootFolderId) {
+  const allFolders = await db.query('SELECT id, name, parent_id FROM folders');
+  const childrenOf = new Map();
+  for (const f of allFolders) {
+    const key = f.parent_id || 'root';
+    if (!childrenOf.has(key)) childrenOf.set(key, []);
+    childrenOf.get(key).push(f);
+  }
+  const results = [];
+  async function walk(folderId, prefix) {
+    const files = folderId
+      ? await db.query('SELECT id, name FROM files WHERE folder_id = ? ORDER BY name', [folderId])
+      : await db.query('SELECT id, name FROM files WHERE folder_id IS NULL ORDER BY name');
+    for (const f of files) results.push({ id: f.id, name: f.name, relPath: prefix + f.name });
+    for (const sub of childrenOf.get(folderId || 'root') || []) await walk(sub.id, prefix + sub.name + '/');
+  }
+  await walk(rootFolderId, '');
+  return results;
+}
+
+// Streams a zip of the given file entries straight to the response - file
+// content comes from one batched query, nothing is written to disk first.
+async function sendZip(res, downloadName, entries) {
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', contentDisposition(downloadName));
+  const contentById = new Map(
+    entries.length ? (await db.query('SELECT id, content FROM files WHERE id = ANY(?)', [entries.map(e => e.id)])).map(f => [f.id, f.content]) : []
+  );
+  const archive = archiver('zip', { zlib: { level: 9 } });
+  archive.on('error', (err) => { console.error('[zip]', err); if (!res.headersSent) res.status(500).end(); });
+  archive.pipe(res);
+  // The app allows two files to share the same name in the same folder, but
+  // a zip can't - two entries at the same path silently overwrite each
+  // other on extraction. De-dupe with a " (2)", " (3)", ... suffix.
+  const seenCounts = new Map();
+  for (const entry of entries) {
+    let name = mdFilename(entry.relPath);
+    const seen = seenCounts.get(name);
+    if (seen) {
+      seenCounts.set(name, seen + 1);
+      const dot = name.lastIndexOf('.');
+      name = dot > 0 ? `${name.slice(0, dot)} (${seen + 1})${name.slice(dot)}` : `${name} (${seen + 1})`;
+    } else {
+      seenCounts.set(name, 1);
+    }
+    archive.append(contentById.get(entry.id) || '', { name });
+  }
+  await archive.finalize();
+}
+
+app.get('/api/files/:id/download', async (req, res) => {
+  const file = await db.get('SELECT name, content FROM files WHERE id = ?', [req.params.id]);
+  if (!file) return res.status(404).json({ error: 'Not found' });
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.setHeader('Content-Disposition', contentDisposition(mdFilename(file.name)));
+  res.send(file.content || '');
+});
+
+app.get('/api/folders/:id/download', async (req, res) => {
+  const folder = await db.get('SELECT name FROM folders WHERE id = ?', [req.params.id]);
+  if (!folder) return res.status(404).json({ error: 'Not found' });
+  const entries = await collectFilesUnder(req.params.id);
+  await sendZip(res, folder.name + '.zip', entries);
+});
+
+app.get('/api/backup', async (req, res) => {
+  const entries = await collectFilesUnder(null);
+  await sendZip(res, `markdown-backup-${new Date().toISOString().slice(0, 10)}.zip`, entries);
+});
+
+app.get('/api/files/:id', async (req, res) => {
+  const file = await db.get('SELECT * FROM files WHERE id = ?', [req.params.id]);
   if (!file) return res.status(404).json({ error: 'Not found' });
   res.json(file);
 });
 
-app.put('/api/files/:id', (req, res) => {
-  const { name, content, is_pinned, folder_id, sort_order } = req.body;
+app.put('/api/files/:id', async (req, res) => {
+  const { name, content, is_pinned, folder_id, sort_order, icon, icon_color } = req.body;
   const sets = [], vals = [];
   if (name !== undefined) { sets.push('name = ?'); vals.push(name); }
   if (content !== undefined) { sets.push('content = ?'); vals.push(content); }
-  if (is_pinned !== undefined) { sets.push('is_pinned = ?'); vals.push(is_pinned ? 1 : 0); }
+  if (is_pinned !== undefined) { sets.push('is_pinned = ?'); vals.push(!!is_pinned); }
   if (folder_id !== undefined) { sets.push('folder_id = ?'); vals.push(folder_id || null); }
   if (sort_order !== undefined) { sets.push('sort_order = ?'); vals.push(sort_order); }
+  if (icon !== undefined) { sets.push('icon = ?'); vals.push(icon || null); }
+  if (icon_color !== undefined) { sets.push('icon_color = ?'); vals.push(icon_color || null); }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
-  sets.push("updated_at = datetime('now')");
+  sets.push('updated_at = NOW()');
   vals.push(req.params.id);
-  const result = run(`UPDATE files SET ${sets.join(', ')} WHERE id = ?`, vals);
+  const result = await db.run(`UPDATE files SET ${sets.join(', ')} WHERE id = ?`, vals);
   if (!result.changes) return res.status(404).json({ error: 'Not found' });
-  scheduleSave();
-  res.json(get('SELECT * FROM files WHERE id = ?', [req.params.id]));
+  res.json(await db.get('SELECT * FROM files WHERE id = ?', [req.params.id]));
 });
 
-app.delete('/api/files/:id', (req, res) => {
-  const result = run('DELETE FROM files WHERE id = ?', [req.params.id]);
+app.delete('/api/files/:id', async (req, res) => {
+  const result = await db.run('DELETE FROM files WHERE id = ?', [req.params.id]);
   if (!result.changes) return res.status(404).json({ error: 'Not found' });
-  scheduleSave();
   res.json({ ok: true });
 });
 
 // ===== SHARING =====
-// Revoke public share
-app.delete('/api/files/:id/share', (req, res) => {
-  run('UPDATE files SET share_id = NULL WHERE id = ?', [req.params.id]);
-  scheduleSave();
+app.delete('/api/files/:id/share', async (req, res) => {
+  await db.run('UPDATE files SET share_id = NULL WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
 });
 
-// Public share (short token, no password)
-app.post('/api/files/:id/share', (req, res) => {
-  const file = get('SELECT * FROM files WHERE id = ?', [req.params.id]);
+app.post('/api/files/:id/share', async (req, res) => {
+  const file = await db.get('SELECT share_id FROM files WHERE id = ?', [req.params.id]);
   if (!file) return res.status(404).json({ error: 'Not found' });
   let shareId = file.share_id;
-  if (!shareId) {
-    shareId = nanoid(8);
-    run('UPDATE files SET share_id = ? WHERE id = ?', [shareId, req.params.id]);
-    scheduleSave();
-  }
+  if (!shareId) { shareId = nanoid(8); await db.run('UPDATE files SET share_id = ? WHERE id = ?', [shareId, req.params.id]); }
   res.json({ share_id: shareId });
 });
 
-// Private share (token + password) — only creates what's requested
-app.post('/api/files/:id/share-private', (req, res) => {
-  const file = get('SELECT * FROM files WHERE id = ?', [req.params.id]);
+app.post('/api/files/:id/share-private', async (req, res) => {
+  const file = await db.get('SELECT private_view_token, private_edit_token FROM files WHERE id = ?', [req.params.id]);
   if (!file) return res.status(404).json({ error: 'Not found' });
   const { view_password, edit_password } = req.body;
-
   const sets = [], vals = [];
   let viewToken = file.private_view_token, editToken = file.private_edit_token;
-
   if (view_password) {
     if (!viewToken) viewToken = nanoid(16);
     sets.push('private_view_token = ?', 'private_view_pw = ?');
-    vals.push(viewToken, hashPassword(view_password));
+    vals.push(viewToken, hashSharePw(view_password));
   }
   if (edit_password) {
     if (!editToken) editToken = nanoid(16);
     sets.push('private_edit_token = ?', 'private_edit_pw = ?');
-    vals.push(editToken, hashPassword(edit_password));
+    vals.push(editToken, hashSharePw(edit_password));
   }
-
-  if (sets.length) {
-    vals.push(req.params.id);
-    run(`UPDATE files SET ${sets.join(', ')} WHERE id = ?`, vals);
-    scheduleSave();
-  }
-
-  res.json({
-    view_token: view_password ? viewToken : file.private_view_token,
-    edit_token: edit_password ? editToken : file.private_edit_token
-  });
+  if (sets.length) { vals.push(req.params.id); await db.run(`UPDATE files SET ${sets.join(', ')} WHERE id = ?`, vals); }
+  res.json({ view_token: view_password ? viewToken : file.private_view_token, edit_token: edit_password ? editToken : file.private_edit_token });
 });
 
-// Revoke private share
-app.delete('/api/files/:id/share-private', (req, res) => {
+app.delete('/api/files/:id/share-private', async (req, res) => {
   const { type } = req.body || {};
-  if (type === 'view') run('UPDATE files SET private_view_token = NULL, private_view_pw = NULL WHERE id = ?', [req.params.id]);
-  else if (type === 'edit') run('UPDATE files SET private_edit_token = NULL, private_edit_pw = NULL WHERE id = ?', [req.params.id]);
-  else run('UPDATE files SET private_view_token = NULL, private_edit_token = NULL, private_view_pw = NULL, private_edit_pw = NULL WHERE id = ?', [req.params.id]);
-  scheduleSave();
+  if (type === 'view') await db.run('UPDATE files SET private_view_token = NULL, private_view_pw = NULL WHERE id = ?', [req.params.id]);
+  else if (type === 'edit') await db.run('UPDATE files SET private_edit_token = NULL, private_edit_pw = NULL WHERE id = ?', [req.params.id]);
+  else await db.run('UPDATE files SET private_view_token = NULL, private_edit_token = NULL, private_view_pw = NULL, private_edit_pw = NULL WHERE id = ?', [req.params.id]);
   res.json({ ok: true });
 });
 
-// Public share endpoints
-app.get('/api/shared/:shareId', (req, res) => {
-  const file = get('SELECT id, name, content, share_id, created_at, updated_at FROM files WHERE share_id = ?', [req.params.shareId]);
+// Public share (no auth)
+app.get('/api/shared/:shareId', async (req, res) => {
+  const file = await db.get('SELECT id, name, content, share_id, created_at, updated_at FROM files WHERE share_id = ?', [req.params.shareId]);
   if (!file) return res.status(404).json({ error: 'Not found' });
   res.json(file);
 });
 
-app.post('/api/shared/:shareId/fork', (req, res) => {
-  const source = get('SELECT name, content FROM files WHERE share_id = ?', [req.params.shareId]);
+app.post('/api/shared/:shareId/fork', async (req, res) => {
+  const source = await db.get('SELECT name, content FROM files WHERE share_id = ?', [req.params.shareId]);
   if (!source) return res.status(404).json({ error: 'Not found' });
   const id = nanoid(12);
-  run('INSERT INTO files (id, name, content) VALUES (?, ?, ?)', [id, source.name + ' (copy)', source.content]);
-  scheduleSave();
-  res.status(201).json(get('SELECT * FROM files WHERE id = ?', [id]));
+  await db.run('INSERT INTO files (id, name, content) VALUES (?, ?, ?)', [id, source.name + ' (copy)', source.content]);
+  res.status(201).json(await db.get('SELECT * FROM files WHERE id = ?', [id]));
 });
 
-// Private view — verify password
-app.post('/api/private/:token/auth', (req, res) => {
-  const file = get('SELECT id, name, content, private_view_pw, created_at, updated_at FROM files WHERE private_view_token = ?', [req.params.token]);
-  if (!file) return res.status(404).json({ error: 'Not found' });
-  if (file.private_view_pw && hashPassword(req.body.password || '') !== file.private_view_pw) {
-    return res.status(403).json({ error: 'Wrong password' });
-  }
-  res.json({ id: file.id, name: file.name, content: file.content, created_at: file.created_at, updated_at: file.updated_at });
-});
-
-// Check if private link needs password
-app.get('/api/private/:token/check', (req, res) => {
-  const file = get('SELECT id, name, private_view_pw FROM files WHERE private_view_token = ?', [req.params.token]);
+// Private share (password-based, no auth)
+app.get('/api/private/:token/check', async (req, res) => {
+  const file = await db.get('SELECT id, name, private_view_pw FROM files WHERE private_view_token = ?', [req.params.token]);
   if (!file) return res.status(404).json({ error: 'Not found' });
   res.json({ needs_password: !!file.private_view_pw, name: file.name });
 });
 
-// Private edit — verify password
-app.post('/api/private-edit/:token/auth', (req, res) => {
-  const file = get('SELECT id, name, content, private_edit_pw, created_at, updated_at FROM files WHERE private_edit_token = ?', [req.params.token]);
+app.post('/api/private/:token/auth', authRateLimiter, async (req, res) => {
+  const file = await db.get('SELECT id, name, content, private_view_pw, created_at, updated_at FROM files WHERE private_view_token = ?', [req.params.token]);
   if (!file) return res.status(404).json({ error: 'Not found' });
-  if (file.private_edit_pw && hashPassword(req.body.password || '') !== file.private_edit_pw) {
-    return res.status(403).json({ error: 'Wrong password' });
-  }
+  if (file.private_view_pw && hashSharePw(req.body.password || '') !== file.private_view_pw) return res.status(403).json({ error: 'Wrong password' });
   res.json({ id: file.id, name: file.name, content: file.content, created_at: file.created_at, updated_at: file.updated_at });
 });
 
-app.get('/api/private-edit/:token/check', (req, res) => {
-  const file = get('SELECT id, name, private_edit_pw FROM files WHERE private_edit_token = ?', [req.params.token]);
+app.get('/api/private-edit/:token/check', async (req, res) => {
+  const file = await db.get('SELECT id, name, private_edit_pw FROM files WHERE private_edit_token = ?', [req.params.token]);
   if (!file) return res.status(404).json({ error: 'Not found' });
   res.json({ needs_password: !!file.private_edit_pw, name: file.name });
 });
 
-app.put('/api/private-edit/:token', (req, res) => {
-  const { password, name, content } = req.body;
-  const file = get('SELECT id, private_edit_pw FROM files WHERE private_edit_token = ?', [req.params.token]);
+app.post('/api/private-edit/:token/auth', authRateLimiter, async (req, res) => {
+  const file = await db.get('SELECT id, name, content, private_edit_pw, created_at, updated_at FROM files WHERE private_edit_token = ?', [req.params.token]);
   if (!file) return res.status(404).json({ error: 'Not found' });
-  if (file.private_edit_pw && hashPassword(password || '') !== file.private_edit_pw) {
-    return res.status(403).json({ error: 'Wrong password' });
-  }
+  if (file.private_edit_pw && hashSharePw(req.body.password || '') !== file.private_edit_pw) return res.status(403).json({ error: 'Wrong password' });
+  res.json({ id: file.id, name: file.name, content: file.content, created_at: file.created_at, updated_at: file.updated_at });
+});
+
+app.put('/api/private-edit/:token', async (req, res) => {
+  const { password, name, content } = req.body;
+  const file = await db.get('SELECT id, private_edit_pw FROM files WHERE private_edit_token = ?', [req.params.token]);
+  if (!file) return res.status(404).json({ error: 'Not found' });
+  if (file.private_edit_pw && hashSharePw(password || '') !== file.private_edit_pw) return res.status(403).json({ error: 'Wrong password' });
   const sets = [], vals = [];
   if (name !== undefined) { sets.push('name = ?'); vals.push(name); }
   if (content !== undefined) { sets.push('content = ?'); vals.push(content); }
   if (!sets.length) return res.status(400).json({ error: 'Nothing to update' });
-  sets.push("updated_at = datetime('now')");
+  sets.push('updated_at = NOW()');
   vals.push(file.id);
-  run(`UPDATE files SET ${sets.join(', ')} WHERE id = ?`, vals);
-  scheduleSave();
-  res.json(get('SELECT id, name, content, created_at, updated_at FROM files WHERE id = ?', [file.id]));
+  await db.run(`UPDATE files SET ${sets.join(', ')} WHERE id = ?`, vals);
+  res.json(await db.get('SELECT id, name, content, created_at, updated_at FROM files WHERE id = ?', [file.id]));
 });
 
 // ===== IMAGE UPLOAD =====
 const ALLOWED_TYPES = { png: true, jpg: true, jpeg: true, gif: true, webp: true };
-const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
-
-const MAGIC_BYTES = {
-  png:  [0x89, 0x50, 0x4E, 0x47],
-  jpg:  [0xFF, 0xD8, 0xFF],
-  jpeg: [0xFF, 0xD8, 0xFF],
-  gif:  [0x47, 0x49, 0x46, 0x38],
-  webp: null // checked separately: RIFF....WEBP
-};
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
+const MAGIC_BYTES = { png: [0x89,0x50,0x4E,0x47], jpg: [0xFF,0xD8,0xFF], jpeg: [0xFF,0xD8,0xFF], gif: [0x47,0x49,0x46,0x38], webp: null };
 
 function validateMagicBytes(buf, ext) {
-  if (ext === 'webp') {
-    return buf.length >= 12
-      && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
-      && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50;
-  }
+  if (ext === 'webp') return buf.length >= 12 && buf[0]===0x52 && buf[1]===0x49 && buf[2]===0x46 && buf[3]===0x46 && buf[8]===0x57 && buf[9]===0x45 && buf[10]===0x42 && buf[11]===0x50;
   const expected = MAGIC_BYTES[ext];
   if (!expected) return false;
-  for (let i = 0; i < expected.length; i++) {
-    if (buf[i] !== expected[i]) return false;
-  }
+  for (let i = 0; i < expected.length; i++) { if (buf[i] !== expected[i]) return false; }
   return true;
+}
+
+function writeImage(buf, type) {
+  const name = nanoid(10) + '.' + (type === 'jpeg' ? 'jpg' : type);
+  fs.writeFileSync(path.join(UPLOAD_DIR, name), buf);
+  return name;
 }
 
 app.post('/api/upload', (req, res) => {
   const { data } = req.body;
   if (!data || typeof data !== 'string') return res.status(400).json({ error: 'No data' });
-
   const match = data.match(/^data:image\/([a-z]+);base64,([A-Za-z0-9+/=]+)$/);
   if (!match) return res.status(400).json({ error: 'Invalid image format' });
-
   const claimedType = match[1].toLowerCase();
-  if (!ALLOWED_TYPES[claimedType]) {
-    return res.status(400).json({ error: 'File type not allowed. Use: png, jpg, gif, webp' });
-  }
-
+  if (!ALLOWED_TYPES[claimedType]) return res.status(400).json({ error: 'File type not allowed' });
   let buf;
-  try {
-    buf = Buffer.from(match[2], 'base64');
-  } catch (e) {
-    return res.status(400).json({ error: 'Invalid base64 data' });
-  }
-
-  if (buf.length === 0) return res.status(400).json({ error: 'Empty file' });
-  if (buf.length > MAX_IMAGE_SIZE) {
-    return res.status(413).json({ error: 'File too large. Max ' + (MAX_IMAGE_SIZE / 1024 / 1024) + 'MB' });
-  }
-
-  if (!validateMagicBytes(buf, claimedType)) {
-    return res.status(400).json({ error: 'File content does not match declared type' });
-  }
-
-  const ext = claimedType === 'jpeg' ? 'jpg' : claimedType;
-  const name = nanoid(10) + '.' + ext;
-  const filePath = path.join(UPLOAD_DIR, name);
-
-  if (!filePath.startsWith(UPLOAD_DIR)) {
-    return res.status(400).json({ error: 'Invalid path' });
-  }
-
-  fs.writeFileSync(filePath, buf);
+  try { buf = Buffer.from(match[2], 'base64'); } catch (e) { return res.status(400).json({ error: 'Invalid base64' }); }
+  if (!buf.length) return res.status(400).json({ error: 'Empty file' });
+  if (buf.length > MAX_IMAGE_SIZE) return res.status(413).json({ error: 'Max 5MB' });
+  if (!validateMagicBytes(buf, claimedType)) return res.status(400).json({ error: 'Content mismatch' });
+  const name = writeImage(buf, claimedType);
   res.json({ url: '/uploads/' + name, name });
 });
 
-// ===== SPA FALLBACK =====
-const serveIndex = (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html'));
+// Public API-key endpoint: same storage as /api/upload, but takes real
+// multipart files (or data-URIs in a JSON body), up to 10 per request, and
+// sniffs each type from the bytes instead of trusting a claimed one. The
+// returned id is the stored filename; the image is then served publicly at
+// /uploads/<id>.
+const MAX_IMAGES_PER_REQUEST = 10;
+const uploadImages = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_IMAGE_SIZE } });
+const DATA_URI_RE = /^data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+)$/;
+
+function sniffImageType(buf) {
+  return ['png', 'jpg', 'gif', 'webp'].find((t) => validateMagicBytes(buf, t)) || null;
+}
+
+app.post('/api/images/upload', uploadImages.array('file', MAX_IMAGES_PER_REQUEST), (req, res) => {
+  // Normalise both input styles into [{ buf, label }].
+  const inputs = [];
+  if (req.files && req.files.length) {
+    req.files.forEach((f) => inputs.push({ buf: f.buffer, label: f.originalname }));
+  } else if (req.body.data !== undefined) {
+    const list = Array.isArray(req.body.data) ? req.body.data : [req.body.data];
+    if (list.length > MAX_IMAGES_PER_REQUEST) return res.status(400).json({ error: 'Too many images (max ' + MAX_IMAGES_PER_REQUEST + ' per request)' });
+    for (let i = 0; i < list.length; i++) {
+      const m = typeof list[i] === 'string' && list[i].match(DATA_URI_RE);
+      if (!m) return res.status(400).json({ error: (list.length > 1 ? 'data[' + i + ']: ' : '') + 'Invalid image data: expected a data:image/...;base64,... URI' });
+      inputs.push({ buf: Buffer.from(m[1], 'base64'), label: 'data[' + i + ']' });
+    }
+  }
+  if (!inputs.length) {
+    return res.status(400).json({ error: 'No image: send one or more "file" parts (multipart/form-data), or "data" as a data-URI / array of data-URIs (JSON)' });
+  }
+
+  // Validate everything first so one bad image can't leave the others stored
+  // with no way for the caller to know which ones landed.
+  const checked = [];
+  for (const { buf, label } of inputs) {
+    const where = inputs.length > 1 ? label + ': ' : '';
+    if (!buf.length) return res.status(400).json({ error: where + 'Empty file' });
+    if (buf.length > MAX_IMAGE_SIZE) return res.status(413).json({ error: where + 'Image too large (max 5MB)' });
+    const type = sniffImageType(buf);
+    if (!type) return res.status(400).json({ error: where + 'Unsupported or corrupt image (png, jpg, gif and webp only)' });
+    checked.push({ buf, type });
+  }
+
+  const base = req.protocol + '://' + req.get('host');
+  const images = checked.map(({ buf, type }) => {
+    const id = writeImage(buf, type);
+    const url = '/uploads/' + id;
+    return { id, url, full_url: base + url, markdown: '![](' + url + ')', type, size: buf.length };
+  });
+  // "images" is always present; a single upload also repeats its fields at the
+  // top level, so the one-image case stays a one-liner for callers.
+  res.status(201).json(images.length === 1 ? { ...images[0], images, count: 1 } : { images, count: images.length });
+});
+
+// ===== SPA =====
+const serveIndex = (req, res) => res.type('html').send(renderVersionedHtml(path.join(__dirname, 'public', 'index.html')));
 app.get('/s/:shareId', serveIndex);
 app.get('/p/:token', serveIndex);
 app.get('/e/:token', serveIndex);
 
-initDb().then(() => {
-  app.listen(PORT, () => {
-    console.log(`Markdown Live Preview running at http://localhost:${PORT}`);
-  });
+// ===== ERROR HANDLER =====
+// Without this, Express's default handler returns an HTML page with a full
+// stack trace (including local file paths) for any thrown/rejected error -
+// including body-parser rejecting a request over the 10mb JSON limit. Every
+// documented API error is JSON, so this one should be too, and it shouldn't
+// leak internals.
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request body too large (max 10mb)' });
+  }
+  if (err.type === 'entity.parse.failed' || err instanceof SyntaxError) {
+    return res.status(400).json({ error: 'Invalid JSON body' });
+  }
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: req.path === '/api/images/upload' ? 'Image too large (max 5MB)' : 'Uploaded file too large (max 10mb)' });
+    }
+    if (err.code === 'LIMIT_UNEXPECTED_FILE' && req.path === '/api/images/upload') {
+      return res.status(400).json({ error: 'Too many images, or a file in the wrong field: send up to ' + MAX_IMAGES_PER_REQUEST + ' files, each in a "file" field' });
+    }
+    return res.status(400).json({ error: `Upload error: ${err.message}` });
+  }
+  console.error('[unhandled error]', err);
+  res.status(err.status || 500).json({ error: 'Internal server error' });
 });
 
-process.on('SIGINT', () => { saveDb(); process.exit(); });
-process.on('SIGTERM', () => { saveDb(); process.exit(); });
+// ===== START =====
+async function start() {
+  try {
+    await db.init();
+    log('PostgreSQL connected');
+    await auth.ensureAdmin();
+    setInterval(() => auth.cleanExpiredSessions(), 60 * 60 * 1000);
+    app.listen(PORT, () => log(`Markdown Preview Studio running at http://localhost:${PORT}`));
+  } catch (e) {
+    console.error('Failed to start:', e.message);
+    process.exit(1);
+  }
+}
+
+start();
+
+process.on('SIGINT', async () => { await db.close(); process.exit(); });
+process.on('SIGTERM', async () => { await db.close(); process.exit(); });
+
+// A rejected promise inside an async route handler isn't caught by Express 4,
+// so it becomes an unhandled rejection - which crashes the whole process
+// (and every other user's request with it) unless we intercept it here.
+process.on('unhandledRejection', (err) => {
+  console.error('[unhandled rejection]', err);
+});
